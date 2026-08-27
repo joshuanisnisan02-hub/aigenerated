@@ -5,19 +5,23 @@ import 'package:http/http.dart' as http;
 class LakbayApi {
   LakbayApi({
     this.chatBaseUrl = '',
-    this.ttsBaseUrl = '',
-    this.publishableKey = '',
-  });
+    String ttsBaseUrl = '',
+    String publishableKey = '',
+  })  : ttsBaseUrl = ttsBaseUrl.trim().isEmpty
+            ? 'https://utzfhdvmevbjtahjsncc.supabase.co/functions/v1'
+            : ttsBaseUrl,
+        publishableKey = publishableKey.trim().isEmpty
+            ? 'sb_publishable_uyxOXkx-5pao9PU4Eg4xjQ_n1E01sGQ'
+            : publishableKey;
 
   /// Base URL for the optional AI/history backend.
   /// When empty, the app keeps using the built-in demo history answers.
   final String chatBaseUrl;
 
   /// Base URL for the natural Filipino speech backend.
-  /// Example: https://YOUR-PROJECT.supabase.co/functions/v1
   final String ttsBaseUrl;
 
-  /// Supabase publishable key. This is intentionally safe for client-side use.
+  /// Supabase publishable key. Publishable keys are intended for client apps.
   final String publishableKey;
 
   bool get hasNaturalVoice => ttsBaseUrl.trim().isNotEmpty;
