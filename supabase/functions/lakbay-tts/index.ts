@@ -5,13 +5,8 @@ const corsHeaders = {
 };
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
-
-  if (req.method !== 'POST') {
-    return json({ error: 'Method not allowed' }, 405);
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   try {
     const suppliedKey = req.headers.get('apikey')?.trim() ?? '';
@@ -24,44 +19,21 @@ Deno.serve(async (req) => {
     }
 
     const { text } = await req.json();
-
     if (typeof text !== 'string' || text.trim().length === 0) {
       return json({ error: 'Text is required.' }, 400);
     }
 
     const apiKey = Deno.env.get('ELEVENLABS_API_KEY');
     const voiceId = Deno.env.get('ELEVENLABS_VOICE_ID') ?? '';
-    const modelId = Deno.env.get('ELEVENLABS_MODEL_ID') ?? 'eleven_multilingual_v2';
 
-    if (!apiKey) {
-      return json({
-        error: 'ElevenLabs is not configured. Set ELEVENLABS_API_KEY in Supabase Edge Function secrets.',
-      }, 500);
-    }
+    if (!apiKey) return json({ error: 'ElevenLabs is not configured.' }, 500);
+    if (!voiceId) return json({ error: 'No ElevenLabs voice is configured.' }, 500);
 
-    if (!voiceId) {
-      return json({
-        error: 'No ElevenLabs voice is configured. Create a Voice Design voice in ElevenLabs and set ELEVENLABS_VOICE_ID in Supabase secrets.',
-      }, 500);
-    }
-
+    // Force a Filipino-capable model that accepts language_code. This avoids
+    // ElevenLabs guessing an English reading for short Filipino sentences.
+    const modelId = 'eleven_flash_v2_5';
     const safeText = normalizeFilipinoSpeech(text).slice(0, 1800);
     const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`;
-
-    const body: Record<string, unknown> = {
-      text: safeText,
-      model_id: modelId,
-      voice_settings: {
-        stability: 0.42,
-        similarity_boost: 0.78,
-        style: 0.16,
-        use_speaker_boost: true,
-      },
-    };
-
-    if (modelId !== 'eleven_multilingual_v2') {
-      body.language_code = 'fil';
-    }
 
     const elevenResponse = await fetch(endpoint, {
       method: 'POST',
@@ -70,19 +42,21 @@ Deno.serve(async (req) => {
         'Content-Type': 'application/json',
         'Accept': 'audio/mpeg',
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        text: safeText,
+        model_id: modelId,
+        language_code: 'fil',
+        voice_settings: {
+          stability: 0.50,
+          similarity_boost: 0.74,
+          style: 0.08,
+          use_speaker_boost: true,
+        },
+      }),
     });
 
     if (!elevenResponse.ok) {
       const details = await elevenResponse.text();
-
-      if (elevenResponse.status === 400 && details.includes('free_users_not_allowed')) {
-        return json({
-          error: 'The selected ElevenLabs voice is not available through the API on the free plan. Create a voice with ElevenLabs Voice Design, then replace ELEVENLABS_VOICE_ID with that custom voice ID.',
-          code: 'voice_not_available_on_free_plan',
-        }, 400);
-      }
-
       return json({
         error: 'ElevenLabs speech request failed.',
         status: elevenResponse.status,
@@ -90,8 +64,7 @@ Deno.serve(async (req) => {
       }, 502);
     }
 
-    const audio = await elevenResponse.arrayBuffer();
-    return new Response(audio, {
+    return new Response(await elevenResponse.arrayBuffer(), {
       status: 200,
       headers: {
         ...corsHeaders,
@@ -115,17 +88,19 @@ function normalizeFilipinoSpeech(input: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 
-  const welcomeStart = 'Mabuhay! Ako si Lakbay Kasaysayan AI,';
-  if (value.startsWith(welcomeStart)) {
+  // Dedicated speech copy for the welcome line. The text shown on-screen stays
+  // unchanged, but the audio uses shorter Filipino clauses and no English-style
+  // reading of the letters A-I.
+  if (/^Mabuhay! Ako si Lakbay Kasaysayan AI,/i.test(value)) {
     value = value.replace(
       /^Mabuhay! Ako si Lakbay Kasaysayan AI, ang iyong gabay sa Kasaysayan ng Pilipinas\. Maaari mo akong tanungin tungkol sa mga tao, lugar, pangyayari, at mahahalagang bahagi ng ating kasaysayan\. Ano ang gusto mong malaman\?/i,
-      'Mabuhay! Ako si Lakbay Kasaysayan, ey ay. Ako ang iyong gabay sa kasaysayan ng Pilipinas. Maaari mo akong tanungin tungkol sa mga tao, lugar, pangyayari, at mahahalagang bahagi ng ating kasaysayan. Ano ang gusto mong malaman?',
+      'Mabuhay. Ako si Lakbay Kasaysayan. Ako ang inyong gabay sa kasaysayan ng Pilipinas. Maaari ninyo akong tanungin tungkol sa mga tao, lugar, pangyayari, at mahahalagang bahagi ng ating kasaysayan. Ano ang nais ninyong malaman?',
     );
   }
 
   const aliases: Array<[RegExp, string]> = [
-    [/\bLakbay Kasaysayan AI\b/gi, 'Lakbay Kasaysayan, ey ay'],
-    [/\bAI\b/g, 'ey ay'],
+    [/\bLakbay Kasaysayan AI\b/gi, 'Lakbay Kasaysayan'],
+    [/\bAI\b/g, 'artipisyal na intelihensiya'],
     [/\bDr\.\s*Jose Rizal\b/gi, 'Doktor Hosé Rizal'],
     [/\bJose Rizal\b/gi, 'Hosé Rizal'],
     [/\bJosé Rizal\b/gi, 'Hosé Rizal'],
@@ -144,20 +119,16 @@ function normalizeFilipinoSpeech(input: string): string {
     [/\bNHCP\b/g, 'N H C P'],
   ];
 
-  for (const [pattern, replacement] of aliases) {
-    value = value.replace(pattern, replacement);
-  }
+  for (const [pattern, replacement] of aliases) value = value.replace(pattern, replacement);
 
   value = replaceNumbersForSpeech(value);
 
-  value = value
+  return value
     .replace(/\s+-\s+/g, ', ')
     .replace(/;\s*/g, ', ')
     .replace(/\.\s*\./g, '.')
     .replace(/\s+([,.!?])/g, '$1')
     .trim();
-
-  return value;
 }
 
 function replaceNumbersForSpeech(input: string): string {
@@ -170,11 +141,7 @@ function replaceNumbersForSpeech(input: string): string {
 
 function filipinoNumber(n: number, conversationalUnder100 = false): string {
   if (n === 0) return 'sero';
-
-  if (conversationalUnder100 && n >= 20 && n < 100) {
-    return conversationalTens(n);
-  }
-
+  if (conversationalUnder100 && n >= 20 && n < 100) return conversationalTens(n);
   if (n < 100) return nativeUnder100(n);
   if (n < 1000) return nativeUnder1000(n);
 
@@ -184,16 +151,13 @@ function filipinoNumber(n: number, conversationalUnder100 = false): string {
     const first = `${linkerForUnit(thousands)} libo`;
     if (rest === 0) return first;
 
-    const restText = nativeUnder1000(rest);
     const hundreds = Math.floor(rest / 100);
     const last = rest % 100;
     if (hundreds > 0 && last > 0) {
       return `${first}, ${hundredsText(hundreds)}, at ${nativeUnder100(last)}`;
     }
-    if (hundreds > 0) {
-      return `${first}, ${hundredsText(hundreds)}`;
-    }
-    return `${first}, ${restText}`;
+    if (hundreds > 0) return `${first}, ${hundredsText(hundreds)}`;
+    return `${first}, ${nativeUnder100(last)}`;
   }
 
   const thousands = Math.floor(n / 1000);
@@ -206,78 +170,31 @@ function filipinoNumber(n: number, conversationalUnder100 = false): string {
 function conversationalTens(n: number): string {
   const tens = Math.floor(n / 10) * 10;
   const ones = n % 10;
-
-  // Exact tens use native Filipino: 20 = dalawampu, 30 = tatlumpu,
-  // 40 = apatnapu, etc. Compound everyday values keep the requested
-  // conversational form, e.g. 23 = bente tres.
   if (ones === 0) return nativeUnder100(n);
 
   const tensWords: Record<number, string> = {
-    20: 'bente',
-    30: 'trenta',
-    40: 'kuwarenta',
-    50: 'singkuwenta',
-    60: 'sesenta',
-    70: 'setenta',
-    80: 'otsenta',
-    90: 'nobenta',
+    20: 'bente', 30: 'trenta', 40: 'kuwarenta', 50: 'singkuwenta',
+    60: 'sesenta', 70: 'setenta', 80: 'otsenta', 90: 'nobenta',
   };
-  const onesWords = [
-    '',
-    'uno',
-    'dos',
-    'tres',
-    'kuwatro',
-    'singko',
-    'sais',
-    'siyete',
-    'otso',
-    'nuwebe',
-  ];
+  const onesWords = ['', 'uno', 'dos', 'tres', 'kuwatro', 'singko', 'sais', 'siyete', 'otso', 'nuwebe'];
   return `${tensWords[tens]} ${onesWords[ones]}`;
 }
 
 function nativeUnder100(n: number): string {
-  const ones = [
-    'sero',
-    'isa',
-    'dalawa',
-    'tatlo',
-    'apat',
-    'lima',
-    'anim',
-    'pito',
-    'walo',
-    'siyam',
-  ];
-
+  const ones = ['sero', 'isa', 'dalawa', 'tatlo', 'apat', 'lima', 'anim', 'pito', 'walo', 'siyam'];
   const teens: Record<number, string> = {
-    10: 'sampu',
-    11: 'labing-isa',
-    12: 'labindalawa',
-    13: 'labintatlo',
-    14: 'labing-apat',
-    15: 'labinlima',
-    16: 'labing-anim',
-    17: 'labimpito',
-    18: 'labingwalo',
-    19: 'labinsiyam',
+    10: 'sampu', 11: 'labing-isa', 12: 'labindalawa', 13: 'labintatlo',
+    14: 'labing-apat', 15: 'labinlima', 16: 'labing-anim', 17: 'labimpito',
+    18: 'labingwalo', 19: 'labinsiyam',
   };
-
   if (n < 10) return ones[n];
   if (n < 20) return teens[n];
 
   const tens = Math.floor(n / 10);
   const unit = n % 10;
   const tensWords: Record<number, string> = {
-    2: 'dalawampu',
-    3: 'tatlumpu',
-    4: 'apatnapu',
-    5: 'limampu',
-    6: 'animnapu',
-    7: 'pitumpu',
-    8: 'walumpu',
-    9: 'siyamnapu',
+    2: 'dalawampu', 3: 'tatlumpu', 4: 'apatnapu', 5: 'limampu',
+    6: 'animnapu', 7: 'pitumpu', 8: 'walumpu', 9: 'siyamnapu',
   };
   if (unit === 0) return tensWords[tens];
   return `${tensWords[tens]}'t ${ones[unit]}`;
@@ -294,30 +211,16 @@ function nativeUnder1000(n: number): string {
 
 function hundredsText(n: number): string {
   const forms: Record<number, string> = {
-    1: 'isang daan',
-    2: 'dalawang daan',
-    3: 'tatlong daan',
-    4: 'apat na raan',
-    5: 'limang daan',
-    6: 'anim na raan',
-    7: 'pitong daan',
-    8: 'walong daan',
-    9: 'siyam na raan',
+    1: 'isang daan', 2: 'dalawang daan', 3: 'tatlong daan', 4: 'apat na raan',
+    5: 'limang daan', 6: 'anim na raan', 7: 'pitong daan', 8: 'walong daan', 9: 'siyam na raan',
   };
   return forms[n];
 }
 
 function linkerForUnit(n: number): string {
   const forms: Record<number, string> = {
-    1: 'isang',
-    2: 'dalawang',
-    3: 'tatlong',
-    4: 'apat na',
-    5: 'limang',
-    6: 'anim na',
-    7: 'pitong',
-    8: 'walong',
-    9: 'siyam na',
+    1: 'isang', 2: 'dalawang', 3: 'tatlong', 4: 'apat na', 5: 'limang',
+    6: 'anim na', 7: 'pitong', 8: 'walong', 9: 'siyam na',
   };
   return forms[n] ?? nativeUnder100(n);
 }
