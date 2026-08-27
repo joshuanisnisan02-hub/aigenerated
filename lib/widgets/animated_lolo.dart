@@ -147,9 +147,16 @@ class _AnimatedLoloState extends State<AnimatedLolo>
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(28),
                       child: Image.asset(
-                        'assets/images/lakbay_lolo_3d.jpg',
+                        'assets/images/lakbay_lolo_3d.webp',
                         fit: BoxFit.contain,
                         filterQuality: FilterQuality.high,
+                        errorBuilder: (context, error, stackTrace) => const Center(
+                          child: Icon(
+                            Icons.person_rounded,
+                            size: 96,
+                            color: Color(0xFFB88A44),
+                          ),
+                        ),
                       ),
                     ),
                   ),
