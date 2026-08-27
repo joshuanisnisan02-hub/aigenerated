@@ -12,6 +12,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   google_fonts: ^6.2.1
   flutter_animate: ^4.5.0
+  flutter_svg: ^2.0.10+1
   http: ^1.2.2
   just_audio: ^0.9.40
   speech_to_text: ^7.0.0
@@ -20,4 +21,4 @@ dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/images/lakbay_lolo.png
+    - assets/images/lakbay_lolo.svg
