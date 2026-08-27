@@ -25,109 +25,101 @@ Deno.serve(async (req) => {
     const geminiKey = Deno.env.get('GEMINI_API_KEY')?.trim() ?? '';
     if (!geminiKey) {
       return json({
-        error: 'Hindi naka-configure ang live history research service.',
+        error: 'Hindi naka-configure ang live history service.',
         code: 'missing_gemini_api_key',
       }, 503);
     }
 
+    const trustedContext = buildTrustedContext(question);
     const systemPrompt = `Ikaw si Lakbay Kasaysayan AI, isang maingat, magiliw, at mapagkakatiwalaang tutor sa Kasaysayan ng Pilipinas.
 
-LAYUNIN:
-Sagutin ang eksaktong tanong ng estudyante gamit ang mapagkakatiwalaang ebidensiya. Hindi ka limitado sa question bank. Gumamit ng Google Search grounding kapag kailangan upang ma-verify ang sagot.
-
-MGA PANUNTUNAN SA KATUMPAKAN:
+MGA PANUNTUNAN:
 - Pangunahing wika: natural na Filipino/Tagalog.
-- Sagutin muna nang direkta ang tanong. Huwag magbigay ng impormasyong hindi hinihingi kung hindi kailangan sa paliwanag.
-- Unawain muna kung ano talaga ang hinihingi ng tanong bago magsaliksik. Halimbawa, kung ang tanong ay tungkol sa mga naging kasintahan ni Jose Rizal, huwag sagutin gamit ang artikulo tungkol sa Noli Me Tangere.
-- Bago magbigay ng tiyak na pangalan, petsa, relasyon, batas, sipi, o bilang, i-cross-check ito sa higit sa isang mapagkakatiwalaang sanggunian kung posible.
-- Unahin ang mga sangguniang ito: National Historical Commission of the Philippines (NHCP), Official Gazette of the Republic of the Philippines, National Archives of the Philippines, National Museum of the Philippines, university publications, peer-reviewed academic works, at kinikilalang historical reference works.
-- Huwag gumamit ng isang random o hindi kaugnay na search result bilang batayan ng sagot.
-- Wikipedia ay maaari lamang maging panimulang sanggunian. Huwag itong gawing nag-iisang batayan para sa sensitibo, kontrobersyal, personal, o biographical na claim.
-- Para sa mga personal na relasyon, pag-ibig, pamilya, tsismis, o disputed biography: malinaw na paghiwalayin ang dokumentadong relasyon, malawak na tinatanggap na historical account, at mga alegasyon o kuwentong hindi sapat ang ebidensiya.
-- Huwag mag-imbento ng pangalan, petsa, source, quote, URL, o dokumento.
-- Kung salungat ang mga source, sabihin: "May iba't ibang interpretasyon ang mga historyador tungkol dito." at ipaliwanag kung saan sila nagkakaiba.
-- Kung hindi sapat ang ebidensiya upang sagutin nang maaasahan, sabihin: "Hindi ako lubos na sigurado sa impormasyong ito. Mas mabuting kumpirmahin natin ito gamit ang mapagkakatiwalaang sanggunian." Huwag punan ang kakulangan gamit ang hula.
+- Sagutin ang EKSAKTONG tanong ng estudyante. Huwag lumihis sa ibang paksa.
+- Hindi ka limitado sa question bank.
+- Huwag mag-imbento ng pangalan, petsa, relasyon, batas, sipi, source, URL, o dokumento.
+- Para sa biographical at personal-history questions, huwag tawaging "kasintahan" ang isang tao kung ang ebidensiya ay nagpapakita lamang ng paghanga, panliligaw, pagkakaibigan, o maikling pagkakaugnay.
+- Kung magkakaiba ang historical accounts, sabihin: "May iba't ibang interpretasyon ang mga historyador tungkol dito." at ipaliwanag nang maikli ang pagkakaiba.
+- Kung hindi sapat ang ebidensiya, sabihin kung alin lang ang matibay na dokumentado. Huwag punan ang kakulangan gamit ang hula.
 - Huwag gawing partisan o propagandistiko ang sagot.
-- Panatilihing malinaw at angkop sa mag-aaral ang paliwanag. Karaniwang 2 hanggang 5 maiikling talata.
-- Kung ang tanong ay hindi tungkol sa Pilipinas o kasaysayan, magalang na ibalik ang usapan sa Kasaysayan ng Pilipinas.
+- Panatilihing malinaw at angkop sa mag-aaral ang paliwanag. Karaniwang 2 hanggang 4 maiikling talata.
+- Sa dulo, maglagay ng "📚 Sanggunian / Maaaring Basahin" at ilista lamang ang mga source names na talagang ibinigay sa TRUSTED CONTEXT o mga kilalang primary/official sources na lubos kang kumpiyansa.
+- Kung ang tanong ay hindi tungkol sa Pilipinas o kasaysayan, magalang na ibalik ang usapan sa Kasaysayan ng Pilipinas.`;
 
-SANGGUNIAN:
-Sa dulo, maglagay ng seksyong "📚 Sanggunian / Maaaring Basahin". Ilagay lamang ang mga source na talagang ginamit o nahanap sa grounded search. Huwag gumawa ng pekeng sanggunian.`;
+    const draftPrompt = `Tanong ng estudyante: ${question}
 
-    const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+${trustedContext ? `TRUSTED CONTEXT:\n${trustedContext}\n\nGamitin ito bilang pangunahing batayan. Huwag salungatin ito nang walang malinaw na dahilan.` : ''}
+
+Sagutin nang direkta, maingat, at pang-estudyante. Kung may terminong malabo gaya ng "kasintahan," linawin ang pagkakaiba ng dokumentadong pag-ibig, panliligaw, at mga babaeng karaniwang iniuugnay lamang sa tao.`;
+
+    const models = [
+      'gemini-3.6-flash',
+      'gemini-3.5-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-2.5-flash',
+    ];
+
     const failures: Array<{ model: string; status: number; details: string }> = [];
 
     for (const model of models) {
-      try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': geminiKey,
-          },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: systemPrompt }] },
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  {
-                    text: `Tanong ng estudyante: ${question}\n\nSuriin muna kung anong uri ng impormasyon ang hinihingi. Mag-search at mag-cross-check ng kaugnay na sources bago sumagot.`,
-                  },
-                ],
-              },
-            ],
-            tools: [{ google_search: {} }],
-            generationConfig: {
-              temperature: 0.1,
-              topP: 0.85,
-              maxOutputTokens: 1200,
-            },
-          }),
-        });
+      const draftResult = await callGemini({
+        apiKey: geminiKey,
+        model,
+        systemPrompt,
+        userPrompt: draftPrompt,
+        maxOutputTokens: 900,
+      });
 
-        if (!response.ok) {
-          const details = await response.text();
-          failures.push({ model, status: response.status, details: details.slice(0, 800) });
-          console.error(`Gemini ${model} failed: ${response.status} ${details.slice(0, 800)}`);
-          continue;
-        }
-
-        const data = await response.json();
-        const candidate = Array.isArray(data?.candidates) ? data.candidates[0] : null;
-        const parts = candidate?.content?.parts;
-        let answer = Array.isArray(parts)
-          ? parts.map((p: { text?: string }) => p?.text ?? '').join('').trim()
-          : '';
-
-        if (!answer) {
-          failures.push({ model, status: 200, details: 'Empty candidate response.' });
-          continue;
-        }
-
-        const groundedSources = extractGroundingSources(candidate?.groundingMetadata);
-        answer = ensureSourceSection(answer, groundedSources);
-
-        return json({
-          answer,
-          model,
-          source: 'gemini-google-search-grounded',
-          grounded: groundedSources.length > 0,
-          sources: groundedSources,
-        });
-      } catch (error) {
-        const details = error instanceof Error ? error.message : String(error);
-        failures.push({ model, status: 0, details });
-        console.error(`Gemini ${model} request error`, error);
+      if (!draftResult.ok) {
+        failures.push({ model, status: draftResult.status, details: draftResult.details });
+        continue;
       }
+
+      let answer = draftResult.text;
+
+      // A second pass acts as an editor/fact-checker without requiring paid
+      // Google Search grounding. It is especially useful for names, dates,
+      // relationships, and disputed historical claims.
+      const verifyPrompt = `Suriin ang sagot sa ibaba bago ito ibigay sa estudyante.
+
+ORIHINAL NA TANONG:
+${question}
+
+${trustedContext ? `TRUSTED CONTEXT:\n${trustedContext}\n` : ''}
+DRAFT NA SAGOT:
+${answer}
+
+Gawain:
+1. Tanggalin o itama ang anumang claim na posibleng imbento, sobra ang katiyakan, hindi tumutugon sa tanong, o maling nag-uuri ng relasyon/pangyayari.
+2. Panatilihin lamang ang mga detalyeng mataas ang kumpiyansa.
+3. Kung may magkakaibang historical accounts, sabihin iyon nang malinaw.
+4. Ibalik ang FINAL ANSWER lamang sa natural na Filipino, kasama ang maikling Sanggunian section. Huwag banggitin ang prosesong ito.`;
+
+      const checked = await callGemini({
+        apiKey: geminiKey,
+        model,
+        systemPrompt,
+        userPrompt: verifyPrompt,
+        maxOutputTokens: 950,
+      });
+
+      if (checked.ok && checked.text.trim().length > 0) {
+        answer = checked.text.trim();
+      }
+
+      return json({
+        answer,
+        model,
+        source: trustedContext ? 'gemini-verified-with-trusted-context' : 'gemini-verified',
+      });
     }
 
-    // Accuracy-first behavior: do not return a loosely matched Wikipedia article
-    // or a guessed answer when grounded research is unavailable.
+    const deterministic = deterministicFallback(question);
+    if (deterministic) return json({ answer: deterministic, source: 'trusted-local-fallback' });
+
     return json({
       answer: 'Hindi ako lubos na sigurado sa impormasyong ito. Mas mabuting kumpirmahin natin ito gamit ang mapagkakatiwalaang sanggunian bago ako magbigay ng tiyak na sagot.',
-      code: 'grounded_history_research_unavailable',
+      code: 'gemini_unavailable',
       failures,
     }, 200);
   } catch (error) {
@@ -136,47 +128,106 @@ Sa dulo, maglagay ng seksyong "📚 Sanggunian / Maaaring Basahin". Ilagay laman
   }
 });
 
-type GroundedSource = {
-  title: string;
-  uri: string;
-};
-
-function extractGroundingSources(metadata: any): GroundedSource[] {
-  const chunks = Array.isArray(metadata?.groundingChunks) ? metadata.groundingChunks : [];
-  const seen = new Set<string>();
-  const sources: GroundedSource[] = [];
-
-  for (const chunk of chunks) {
-    const title = String(chunk?.web?.title ?? '').trim();
-    const uri = String(chunk?.web?.uri ?? '').trim();
-    if (!title && !uri) continue;
-
-    const key = `${title}|${uri}`.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    sources.push({ title: title || domainFromUrl(uri), uri });
-    if (sources.length >= 4) break;
-  }
-
-  return sources;
-}
-
-function ensureSourceSection(answer: string, sources: GroundedSource[]): string {
-  const cleaned = answer.trim();
-  if (sources.length === 0 || /📚\s*Sanggunian\s*\/\s*Maaaring Basahin/i.test(cleaned)) {
-    return cleaned;
-  }
-
-  const lines = sources.map((source) => `- ${source.title}`);
-  return `${cleaned}\n\n📚 Sanggunian / Maaaring Basahin\n${lines.join('\n')}`;
-}
-
-function domainFromUrl(uri: string): string {
+async function callGemini(args: {
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+  maxOutputTokens: number;
+}): Promise<{ ok: true; text: string; status: number; details: string } | { ok: false; text: string; status: number; details: string }> {
   try {
-    return new URL(uri).hostname.replace(/^www\./, '');
-  } catch (_) {
-    return 'Web source';
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${args.model}:generateContent`;
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': args.apiKey,
+      },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: args.systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text: args.userPrompt }] }],
+        generationConfig: {
+          temperature: 0.12,
+          topP: 0.85,
+          maxOutputTokens: args.maxOutputTokens,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const details = (await response.text()).slice(0, 1000);
+      console.error(`Gemini ${args.model} failed: ${response.status} ${details}`);
+      return { ok: false, text: '', status: response.status, details };
+    }
+
+    const data = await response.json();
+    const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
+    const parts = candidates[0]?.content?.parts;
+    const text = Array.isArray(parts)
+      ? parts.map((p: { text?: string }) => p?.text ?? '').join('').trim()
+      : '';
+
+    if (!text) {
+      return { ok: false, text: '', status: 200, details: 'Empty candidate response.' };
+    }
+
+    return { ok: true, text, status: 200, details: '' };
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    console.error(`Gemini ${args.model} request error`, error);
+    return { ok: false, text: '', status: 0, details };
   }
+}
+
+function buildTrustedContext(question: string): string {
+  const q = question.toLowerCase();
+
+  if (q.includes('rizal') && /(kasintahan|girlfriend|pag-ibig|pagibig|love life|naging babae|mga babae)/i.test(q)) {
+    return `Paksa: Mga pag-ibig at relasyong romantiko ni Jose Rizal.
+
+MGA MATIBAY NA PUNTONG MAAARING GAMITIN:
+- Ang historical marker ng Concordia College sa NHCP registry ay tahasang nagsasabing doon nakilala ni Rizal ang kanyang "unang pag-ibig" na si Segunda Katigbak, at si Leonor Rivera na "pinag-ukulan niya ng tunay na pagmamahal."
+- Ang National Museum of the Philippines, sa paglalarawan ng obra ni Rizal na "Josephine Sleeping," ay tumutukoy kay Josephine Bracken bilang "his last love."
+- Sa isang NHCP FOI response tungkol kina Rizal at Josephine Bracken, itinuro ng NHCP ang akda ni Austin Craig, Lineage, Life and Labors of José Rizal, Philippine Patriot, bilang sanggunian para sa kanilang relasyon.
+
+MAHALAGANG PAG-IINGAT:
+- Maraming popular na listahan ang nagsasama ng iba pang babaeng nakilala, hinangaan, niligawan, o nakaugnay kay Rizal. Huwag awtomatikong tawagin silang lahat na pormal na "kasintahan" kung walang sapat na ebidensiya.
+- Kung magbabanggit ng iba pang pangalan, ilagay sila sa hiwalay na kategoryang "iba pang babaeng romantikong iniuugnay kay Rizal" at ipaliwanag na nag-iiba ang klasipikasyon depende sa historyador/source.
+
+MGA SANGGUNIANG PANGALAN NA MAAARING ILAGAY:
+- National Historical Commission of the Philippines (NHCP), Concordia College historical marker registry
+- National Museum of the Philippines, "Josephine Sleeping"
+- Austin Craig, Lineage, Life and Labors of José Rizal, Philippine Patriot`;
+  }
+
+  if (q.includes('pugad lawin') || q.includes('balintawak')) {
+    return `Paksa: Sigaw ng Pugad Lawin / Balintawak.
+- May iba't ibang salaysay tungkol sa eksaktong lugar at petsa ng "Sigaw," kaya huwag magkunwaring iisa lamang ang walang-kontrobersiyang bersyon.
+- Iugnay ito sa hayagang pagputol ng mga Katipunero sa kolonyal na kapangyarihan at sa pagsisimula ng rebolusyonaryong pag-aaklas noong Agosto 1896.
+- Kapag binanggit ang pagpunit ng cedula, ipaliwanag na bahagi ito ng mga salaysay tungkol sa pangyayari ngunit may pagkakaiba ang testimonya sa petsa at lokasyon.
+Sanggunian: National Historical Commission of the Philippines (NHCP); mga memoir/testimonya ng Katipunero gaya ni Pio Valenzuela.`;
+  }
+
+  return '';
+}
+
+function deterministicFallback(question: string): string | null {
+  const q = question.toLowerCase();
+
+  if (q.includes('rizal') && /(kasintahan|girlfriend|pag-ibig|pagibig|love life|naging babae|mga babae)/i.test(q)) {
+    return `Hindi lahat ng babaeng karaniwang iniuugnay kay Jose Rizal ay maituturing na pormal na “kasintahan” sa modernong kahulugan. Sa mga mas matibay na pampublikong sanggunian, tatlong relasyong malinaw na mailalarawan ay sina Segunda Katigbak, Leonor Rivera, at Josephine Bracken.
+
+Si Segunda Katigbak ay tinutukoy sa NHCP historical marker ng Concordia College bilang unang pag-ibig ni Rizal. Si Leonor Rivera naman ay inilalarawan sa marker na pinag-ukulan niya ng tunay na pagmamahal. Si Josephine Bracken ang naging kapareha niya sa Dapitan at tinutukoy ng National Museum of the Philippines bilang kanyang “last love.”
+
+May iba pang babaeng madalas isama sa popular na mga listahan tungkol sa love life ni Rizal, ngunit nagkakaiba ang mga historyador kung dapat silang tawaging kasintahan, niligawan, hinangaan, o romantikong nakaugnay lamang. Kaya mas maingat na huwag silang pagsama-samahin sa iisang kategorya nang walang paliwanag.
+
+📚 Sanggunian / Maaaring Basahin
+- National Historical Commission of the Philippines (NHCP), Concordia College historical marker registry
+- National Museum of the Philippines, “Josephine Sleeping”
+- Austin Craig, Lineage, Life and Labors of José Rizal, Philippine Patriot`;
+  }
+
+  return null;
 }
 
 function json(body: unknown, status = 200): Response {
