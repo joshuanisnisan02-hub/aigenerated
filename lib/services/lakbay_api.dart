@@ -6,6 +6,7 @@ class LakbayApi {
   LakbayApi({
     this.chatBaseUrl = '',
     this.ttsBaseUrl = '',
+    this.publishableKey = '',
   });
 
   /// Base URL for the optional AI/history backend.
@@ -16,8 +17,16 @@ class LakbayApi {
   /// Example: https://YOUR-PROJECT.supabase.co/functions/v1
   final String ttsBaseUrl;
 
+  /// Supabase publishable key. This is intentionally safe for client-side use.
+  final String publishableKey;
+
   bool get hasNaturalVoice => ttsBaseUrl.trim().isNotEmpty;
   bool get hasLiveChat => chatBaseUrl.trim().isNotEmpty;
+
+  Map<String, String> get _headers => {
+        'Content-Type': 'application/json',
+        if (publishableKey.trim().isNotEmpty) 'apikey': publishableKey.trim(),
+      };
 
   Future<String> ask(String question) async {
     if (!hasLiveChat) {
@@ -26,7 +35,7 @@ class LakbayApi {
 
     final response = await http.post(
       Uri.parse('${chatBaseUrl.replaceAll(RegExp(r'/$'), '')}/lakbay-chat'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers,
       body: jsonEncode({'question': question}),
     );
 
@@ -45,7 +54,7 @@ class LakbayApi {
 
     final response = await http.post(
       Uri.parse('${ttsBaseUrl.replaceAll(RegExp(r'/$'), '')}/lakbay-tts'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers,
       body: jsonEncode({'text': text}),
     );
 
