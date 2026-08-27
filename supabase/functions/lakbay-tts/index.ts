@@ -10,20 +10,23 @@ Deno.serve(async (req) => {
   }
 
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return json({ error: 'Method not allowed' }, 405);
   }
 
   try {
+    const suppliedKey = req.headers.get('apikey')?.trim() ?? '';
+    const publishableKeysRaw = Deno.env.get('SUPABASE_PUBLISHABLE_KEYS') ?? '{}';
+    const publishableKeys = JSON.parse(publishableKeysRaw) as Record<string, string>;
+    const allowedKeys = Object.values(publishableKeys);
+
+    if (!suppliedKey || !allowedKeys.includes(suppliedKey)) {
+      return json({ error: 'Invalid Supabase publishable key.' }, 401);
+    }
+
     const { text } = await req.json();
 
     if (typeof text !== 'string' || text.trim().length === 0) {
-      return new Response(JSON.stringify({ error: 'Text is required.' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return json({ error: 'Text is required.' }, 400);
     }
 
     const speechKey = Deno.env.get('AZURE_SPEECH_KEY');
@@ -31,21 +34,13 @@ Deno.serve(async (req) => {
     const voice = Deno.env.get('AZURE_FILIPINO_VOICE') ?? 'fil-PH-AngeloNeural';
 
     if (!speechKey || !speechRegion) {
-      return new Response(
-        JSON.stringify({
-          error: 'Azure Speech is not configured. Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION.',
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        },
-      );
+      return json({
+        error: 'Azure Speech is not configured. Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION in Supabase Edge Function secrets.',
+      }, 500);
     }
 
     const safeText = escapeXml(text.trim().slice(0, 4500));
 
-    // Warm, conversational Filipino delivery suited to the Lakbay Lolo character.
-    // The reference recording is used only as a style target (pace/prosody), not as a voice clone.
     const ssml = `<?xml version="1.0" encoding="UTF-8"?>
 <speak version="1.0" xml:lang="fil-PH" xmlns="http://www.w3.org/2001/10/synthesis">
   <voice name="${voice}">
@@ -69,17 +64,11 @@ Deno.serve(async (req) => {
 
     if (!azureResponse.ok) {
       const details = await azureResponse.text();
-      return new Response(
-        JSON.stringify({
-          error: 'Azure Speech request failed.',
-          status: azureResponse.status,
-          details,
-        }),
-        {
-          status: 502,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        },
-      );
+      return json({
+        error: 'Azure Speech request failed.',
+        status: azureResponse.status,
+        details,
+      }, 502);
     }
 
     const audio = await azureResponse.arrayBuffer();
@@ -92,15 +81,16 @@ Deno.serve(async (req) => {
       },
     });
   } catch (error) {
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      },
-    );
+    return json({ error: error instanceof Error ? error.message : String(error) }, 500);
   }
 });
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
 
 function escapeXml(value: string): string {
   return value
