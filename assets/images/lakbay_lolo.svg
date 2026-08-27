@@ -68,27 +68,13 @@
     <path d="M255 184 Q235 206 244 260 Q252 214 272 193Z" fill="#d6d8d8"/>
     <path d="M445 184 Q465 206 456 260 Q448 214 428 193Z" fill="#d6d8d8"/>
 
-    <!-- brows -->
-    <path d="M290 205 Q320 190 338 207" fill="none" stroke="#6c6d70" stroke-width="10" stroke-linecap="round"/>
-    <path d="M362 207 Q385 190 414 205" fill="none" stroke="#6c6d70" stroke-width="10" stroke-linecap="round"/>
-
-    <!-- eyes -->
-    <ellipse cx="315" cy="225" rx="17" ry="11" fill="#fff"/>
-    <ellipse cx="385" cy="225" rx="17" ry="11" fill="#fff"/>
-    <circle cx="316" cy="226" r="7" fill="#32261e"/>
-    <circle cx="384" cy="226" r="7" fill="#32261e"/>
-    <circle cx="318" cy="223" r="2" fill="#fff"/>
-    <circle cx="386" cy="223" r="2" fill="#fff"/>
+    <!-- Face is intentionally animation-ready: eyes, brows and mouth are drawn by Flutter -->
 
     <!-- nose -->
     <path d="M350 224 Q334 257 350 265 Q369 260 365 247" fill="none" stroke="#b96134" stroke-width="4" stroke-linecap="round"/>
 
     <!-- moustache -->
     <path d="M300 278 Q330 261 349 280 Q368 260 402 278 Q381 307 351 294 Q321 307 300 278Z" fill="#f2f2ec" stroke="#8d8f94" stroke-width="4"/>
-
-    <!-- smile/mouth -->
-    <path d="M312 295 Q350 330 389 295 Q373 335 350 337 Q326 335 312 295Z" fill="#6d291f"/>
-    <path d="M323 302 Q350 318 378 302" stroke="#fff" stroke-width="9" stroke-linecap="round"/>
 
     <!-- salakot -->
     <path d="M205 138 Q350 43 495 138 Q454 165 350 169 Q246 165 205 138Z" fill="url(#hat)" stroke="#8e6134" stroke-width="5"/>
