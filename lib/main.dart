@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'screens/home_screen.dart';
 
 void main() {
@@ -28,7 +27,10 @@ class LakbayKasaysayanApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Lakbay Kasaysayan AI',
       theme: base.copyWith(
-        textTheme: GoogleFonts.plusJakartaSansTextTheme(base.textTheme),
+        // Keep fonts local/system-based so the app doesn't depend on Google Fonts
+        // at runtime. This is more reliable on school/campus networks that block
+        // fonts.gstatic.com.
+        textTheme: base.textTheme.apply(fontFamily: 'Arial'),
         cardTheme: CardThemeData(
           elevation: 0,
           color: const Color(0xFFFFFCF5),
