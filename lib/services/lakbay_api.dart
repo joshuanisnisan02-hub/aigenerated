@@ -4,18 +4,20 @@ import 'package:http/http.dart' as http;
 
 class LakbayApi {
   LakbayApi({
-    this.chatBaseUrl = '',
+    String chatBaseUrl = '',
     String ttsBaseUrl = '',
     String publishableKey = '',
-  })  : ttsBaseUrl = ttsBaseUrl.trim().isEmpty
+  })  : chatBaseUrl = chatBaseUrl.trim().isEmpty
+            ? 'https://utzfhdvmevbjtahjsncc.supabase.co/functions/v1'
+            : chatBaseUrl,
+        ttsBaseUrl = ttsBaseUrl.trim().isEmpty
             ? 'https://utzfhdvmevbjtahjsncc.supabase.co/functions/v1'
             : ttsBaseUrl,
         publishableKey = publishableKey.trim().isEmpty
             ? 'sb_publishable_uyxOXkx-5pao9PU4Eg4xjQ_n1E01sGQ'
             : publishableKey;
 
-  /// Base URL for the optional AI/history backend.
-  /// When empty, the app keeps using the built-in demo history answers.
+  /// Base URL for the live AI/history backend.
   final String chatBaseUrl;
 
   /// Base URL for the natural Filipino speech backend.
@@ -37,18 +39,29 @@ class LakbayApi {
       return _demoAnswer(question);
     }
 
-    final response = await http.post(
-      Uri.parse('${chatBaseUrl.replaceAll(RegExp(r'/$'), '')}/lakbay-chat'),
-      headers: _headers,
-      body: jsonEncode({'question': question}),
-    );
+    try {
+      final response = await http.post(
+        Uri.parse('${chatBaseUrl.replaceAll(RegExp(r'/$'), '')}/lakbay-chat'),
+        headers: _headers,
+        body: jsonEncode({'question': question}),
+      );
 
-    if (response.statusCode >= 400) {
-      throw Exception('Hindi makakonekta sa history service.');
+      if (response.statusCode >= 400) {
+        final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+        throw Exception(body.isEmpty ? 'Hindi makakonekta sa history service.' : body);
+      }
+
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+      final answer = (data['answer'] as String?)?.trim();
+      if (answer == null || answer.isEmpty) {
+        throw Exception('Walang sagot na natanggap.');
+      }
+      return answer;
+    } catch (_) {
+      // Keep the classroom app usable even if the live AI provider is temporarily
+      // unavailable. Known demo topics still have a local fallback.
+      return _demoAnswer(question);
     }
-
-    final data = jsonDecode(utf8.decode(response.bodyBytes));
-    return (data['answer'] as String?) ?? 'Walang sagot na natanggap.';
   }
 
   Future<Uint8List> synthesize(String text) async {
@@ -88,6 +101,6 @@ class LakbayApi {
     if (q.contains('martial law')) {
       return 'Ang Martial Law sa ilalim ni Ferdinand Marcos Sr. ay idineklara sa pamamagitan ng Proclamation No. 1081, na may petsang Setyembre 21, 1972 at inanunsyo sa publiko noong Setyembre 23. Sa pagtalakay nito, mahalagang gumamit ng primaryang dokumento, opisyal na tala, akademikong pananaliksik, at testimonya ng mga nakaranas ng panahong iyon dahil maraming usaping politikal at historikal ang patuloy na pinagtatalunan.';
     }
-    return 'Magandang tanong iyan. Sa buong bersyon ng Lakbay Kasaysayan AI, sasagutin ko ito sa malinaw na Filipino at magbibigay ako ng mapagkakatiwalaang sanggunian. Sa demo na ito, subukan mong itanong ang tungkol sa Katipunan, Labanan sa Mactan, Jose Rizal, o Martial Law.';
+    return 'Magandang tanong iyan. Hindi available ang live history AI sa sandaling ito. Kapag nakakonekta ang AI backend, masasagot ni Lakbay ang iba pang paksa sa Kasaysayan ng Pilipinas at hindi lamang ang mga nakahandang halimbawa.';
   }
 }
