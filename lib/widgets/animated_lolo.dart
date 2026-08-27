@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
 class AnimatedLolo extends StatefulWidget {
   const AnimatedLolo({
@@ -19,58 +18,41 @@ class AnimatedLolo extends StatefulWidget {
 class _AnimatedLoloState extends State<AnimatedLolo>
     with TickerProviderStateMixin {
   late final AnimationController _idle;
-  late final AnimationController _mouth;
-  late final AnimationController _blink;
+  late final AnimationController _narration;
   late final AnimationController _sparkle;
-  final _random = math.Random();
 
   @override
   void initState() {
     super.initState();
     _idle = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 4200),
-    )..repeat(reverse: true);
-    _mouth = AnimationController(
+      duration: const Duration(milliseconds: 5200),
+    )..repeat();
+    _narration = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 170),
-    );
-    _blink = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 180),
+      duration: const Duration(milliseconds: 1500),
     );
     _sparkle = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2200),
+      duration: const Duration(milliseconds: 2500),
     )..repeat();
-    _scheduleBlink();
-  }
-
-  Future<void> _scheduleBlink() async {
-    while (mounted) {
-      await Future<void>.delayed(Duration(seconds: 3 + _random.nextInt(4)));
-      if (!mounted) return;
-      await _blink.forward();
-      await _blink.reverse();
-    }
   }
 
   @override
   void didUpdateWidget(covariant AnimatedLolo oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.isSpeaking && !_mouth.isAnimating) {
-      _mouth.repeat(reverse: true);
-    } else if (!widget.isSpeaking && _mouth.isAnimating) {
-      _mouth.stop();
-      _mouth.value = 0;
+    if (widget.isSpeaking && !_narration.isAnimating) {
+      _narration.repeat();
+    } else if (!widget.isSpeaking && _narration.isAnimating) {
+      _narration.stop();
+      _narration.value = 0;
     }
   }
 
   @override
   void dispose() {
     _idle.dispose();
-    _mouth.dispose();
-    _blink.dispose();
+    _narration.dispose();
     _sparkle.dispose();
     super.dispose();
   }
@@ -78,16 +60,25 @@ class _AnimatedLoloState extends State<AnimatedLolo>
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([_idle, _mouth, _blink, _sparkle]),
+      animation: Listenable.merge([_idle, _narration, _sparkle]),
       builder: (context, _) {
-        final phase = _idle.value * math.pi * 2;
-        final breathe = 1 + (math.sin(phase) * .012);
-        final sway = math.sin(phase) * .012;
-        final lift = math.sin(phase) * 4.0;
-        final talkPulse = widget.isSpeaking
-            ? .5 + (math.sin(_mouth.value * math.pi) * .5)
+        final idlePhase = _idle.value * math.pi * 2;
+        final talkPhase = _narration.value * math.pi * 2;
+
+        final breathe = 1 + math.sin(idlePhase) * 0.008;
+        final idleLift = math.sin(idlePhase) * 3.0;
+        final idleTilt = math.sin(idlePhase * .5) * .006;
+
+        final speakingNod = widget.isSpeaking ? math.sin(talkPhase) * 2.5 : 0.0;
+        final speakingTilt = widget.isSpeaking
+            ? math.sin(talkPhase * .5) * .012
             : 0.0;
-        final blinkAmount = Curves.easeInOut.transform(_blink.value);
+        final speakingScale = widget.isSpeaking
+            ? 1 + math.sin(talkPhase * 1.5).abs() * .004
+            : 1.0;
+
+        final thinkingTilt = widget.isThinking ? -.018 : 0.0;
+        final totalTilt = idleTilt + speakingTilt + thinkingTilt;
 
         return Stack(
           alignment: Alignment.center,
@@ -97,10 +88,10 @@ class _AnimatedLoloState extends State<AnimatedLolo>
                 decoration: BoxDecoration(
                   gradient: RadialGradient(
                     center: const Alignment(0, -.12),
-                    radius: .72,
+                    radius: .78,
                     colors: [
-                      const Color(0xFFFFE4AA).withOpacity(.30),
-                      const Color(0xFFF0D39B).withOpacity(.14),
+                      const Color(0xFFFFE7B0).withOpacity(.28),
+                      const Color(0xFFE9C98C).withOpacity(.10),
                       Colors.transparent,
                     ],
                   ),
@@ -110,26 +101,26 @@ class _AnimatedLoloState extends State<AnimatedLolo>
             Positioned.fill(
               child: IgnorePointer(
                 child: CustomPaint(
-                  painter: _CharacterAuraPainter(
+                  painter: _NarrationAuraPainter(
                     speaking: widget.isSpeaking,
                     thinking: widget.isThinking,
-                    pulse: talkPulse,
+                    pulse: _narration.value,
                     sparkle: _sparkle.value,
                   ),
                 ),
               ),
             ),
             Positioned(
-              bottom: 6,
+              bottom: 4,
               child: Container(
-                width: 225,
+                width: 230,
                 height: 34,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(999),
                   gradient: const RadialGradient(
                     colors: [
-                      Color(0x552B2118),
-                      Color(0x152B2118),
+                      Color(0x4D2B2118),
+                      Color(0x122B2118),
                       Colors.transparent,
                     ],
                   ),
@@ -137,51 +128,30 @@ class _AnimatedLoloState extends State<AnimatedLolo>
               ),
             ),
             Transform.translate(
-              offset: Offset(0, widget.isThinking ? lift * .55 : lift),
+              offset: Offset(0, idleLift + speakingNod),
               child: Transform.rotate(
-                angle: widget.isThinking ? -.022 : sway,
+                angle: totalTilt,
                 child: Transform.scale(
-                  scale: widget.isThinking ? .992 : breathe,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Container(
-                        width: 300,
-                        height: 480,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(180),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF6C4B25).withOpacity(.16),
-                              blurRadius: 28,
-                              offset: const Offset(0, 12),
-                            ),
-                          ],
+                  scale: breathe * speakingScale,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(28),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF6A4723).withOpacity(.18),
+                          blurRadius: 28,
+                          offset: const Offset(0, 14),
                         ),
-                      ),
-                      SvgPicture.asset(
-                        'assets/images/lakbay_lolo.svg',
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(28),
+                      child: Image.asset(
+                        'assets/images/lakbay_lolo_3d.jpg',
                         fit: BoxFit.contain,
+                        filterQuality: FilterQuality.high,
                       ),
-                      Align(
-                        alignment: const Alignment(0.0, -.52),
-                        child: IgnorePointer(
-                          child: SizedBox(
-                            width: 150,
-                            height: 112,
-                            child: CustomPaint(
-                              painter: _NaturalFacePainter(
-                                blinkAmount: blinkAmount,
-                                mouthPhase: _mouth.value,
-                                idlePhase: phase,
-                                isSpeaking: widget.isSpeaking,
-                                isThinking: widget.isThinking,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -193,197 +163,8 @@ class _AnimatedLoloState extends State<AnimatedLolo>
   }
 }
 
-class _NaturalFacePainter extends CustomPainter {
-  _NaturalFacePainter({
-    required this.blinkAmount,
-    required this.mouthPhase,
-    required this.idlePhase,
-    required this.isSpeaking,
-    required this.isThinking,
-  });
-
-  final double blinkAmount;
-  final double mouthPhase;
-  final double idlePhase;
-  final bool isSpeaking;
-  final bool isThinking;
-
-  static const _brow = Color(0xFF6C6D70);
-  static const _eye = Color(0xFF32261E);
-  static const _mouth = Color(0xFF6D291F);
-  static const _lip = Color(0xFF8E4330);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final eyeY = size.height * .29;
-    final eyeOpen = 1.0 - blinkAmount;
-    final lookX = isThinking ? -2.2 : math.sin(idlePhase * .55) * .8;
-    final lookY = isThinking ? -.8 : math.cos(idlePhase * .42) * .45;
-
-    _drawBrow(canvas, Offset(cx - 34, eyeY - 17), false);
-    _drawBrow(canvas, Offset(cx + 34, eyeY - 17), true);
-    _drawEye(canvas, Offset(cx - 34, eyeY), eyeOpen, lookX, lookY);
-    _drawEye(canvas, Offset(cx + 34, eyeY), eyeOpen, lookX, lookY);
-    _drawMouth(canvas, cx, size.height * .79);
-  }
-
-  void _drawBrow(Canvas canvas, Offset center, bool right) {
-    final direction = right ? 1.0 : -1.0;
-    final path = Path()
-      ..moveTo(center.dx - 13 * direction, center.dy + 3)
-      ..quadraticBezierTo(
-        center.dx - 3 * direction,
-        center.dy - 6,
-        center.dx + 13 * direction,
-        center.dy + 2,
-      );
-
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = _brow
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 4.2
-        ..strokeCap = StrokeCap.round,
-    );
-  }
-
-  void _drawEye(
-    Canvas canvas,
-    Offset center,
-    double openness,
-    double lookX,
-    double lookY,
-  ) {
-    if (openness < .12) {
-      canvas.drawArc(
-        Rect.fromCenter(center: center, width: 25, height: 7),
-        math.pi,
-        math.pi,
-        false,
-        Paint()
-          ..color = const Color(0xFF9D5E3C)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.6
-          ..strokeCap = StrokeCap.round,
-      );
-      return;
-    }
-
-    final eyeRect = Rect.fromCenter(
-      center: center,
-      width: 25,
-      height: 10 + (7 * openness),
-    );
-
-    canvas.drawOval(eyeRect, Paint()..color = Colors.white);
-    canvas.drawOval(
-      eyeRect,
-      Paint()
-        ..color = const Color(0xFFB56B44).withOpacity(.55)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.3,
-    );
-
-    final pupil = center.translate(lookX, lookY);
-    canvas.drawCircle(pupil, 5.0, Paint()..color = _eye);
-    canvas.drawCircle(
-      pupil.translate(-1.5, -1.3),
-      1.3,
-      Paint()..color = Colors.white,
-    );
-  }
-
-  void _drawMouth(Canvas canvas, double cx, double y) {
-    if (!isSpeaking) {
-      final smile = Path()
-        ..moveTo(cx - 17, y)
-        ..quadraticBezierTo(cx, y + 10, cx + 17, y);
-      canvas.drawPath(
-        smile,
-        Paint()
-          ..color = _lip
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.7
-          ..strokeCap = StrokeCap.round,
-      );
-      return;
-    }
-
-    final wave = .5 + .5 * math.sin(mouthPhase * math.pi);
-    final shapeIndex = ((mouthPhase * 5).floor()) % 5;
-
-    double width;
-    double height;
-    switch (shapeIndex) {
-      case 0:
-        width = 25;
-        height = 9 + 5 * wave;
-        break;
-      case 1:
-        width = 18;
-        height = 16 + 6 * wave;
-        break;
-      case 2:
-        width = 31;
-        height = 11 + 7 * wave;
-        break;
-      case 3:
-        width = 21;
-        height = 19 + 5 * wave;
-        break;
-      default:
-        width = 27;
-        height = 13 + 5 * wave;
-    }
-
-    final rect = Rect.fromCenter(
-      center: Offset(cx, y),
-      width: width,
-      height: height,
-    );
-
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, const Radius.circular(10)),
-      Paint()..color = _mouth,
-    );
-
-    if (shapeIndex == 0 || shapeIndex == 2) {
-      final teeth = Rect.fromCenter(
-        center: Offset(cx, y - height * .16),
-        width: width * .74,
-        height: math.max(2.8, height * .24),
-      );
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(teeth, const Radius.circular(3)),
-        Paint()..color = Colors.white,
-      );
-    } else {
-      final tongue = Rect.fromCenter(
-        center: Offset(cx, y + height * .22),
-        width: width * .44,
-        height: math.max(2.8, height * .24),
-      );
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(tongue, const Radius.circular(4)),
-        Paint()..color = const Color(0xFFD86E72),
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _NaturalFacePainter oldDelegate) {
-    return oldDelegate.blinkAmount != blinkAmount ||
-        oldDelegate.mouthPhase != mouthPhase ||
-        oldDelegate.idlePhase != idlePhase ||
-        oldDelegate.isSpeaking != isSpeaking ||
-        oldDelegate.isThinking != isThinking;
-  }
-}
-
-class _CharacterAuraPainter extends CustomPainter {
-  _CharacterAuraPainter({
+class _NarrationAuraPainter extends CustomPainter {
+  _NarrationAuraPainter({
     required this.speaking,
     required this.thinking,
     required this.pulse,
@@ -397,37 +178,38 @@ class _CharacterAuraPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height * .43);
+    final center = Offset(size.width / 2, size.height * .46);
 
     final ring = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2
-      ..color = const Color(0x2AB88A44);
+      ..color = const Color(0x26B88A44);
 
-    canvas.drawCircle(center, size.shortestSide * .23, ring);
-    ring.color = const Color(0x16B88A44);
-    canvas.drawCircle(center, size.shortestSide * .31, ring);
+    canvas.drawCircle(center, size.shortestSide * .22, ring);
+    ring.color = const Color(0x14B88A44);
+    canvas.drawCircle(center, size.shortestSide * .30, ring);
 
     if (speaking) {
+      final wave = .5 + .5 * math.sin(pulse * math.pi * 2);
       final voicePaint = Paint()
-        ..color = const Color(0xFFB67C2E).withOpacity(.40 + pulse * .28)
-        ..strokeWidth = 5
+        ..color = const Color(0xFFB67C2E).withOpacity(.34 + wave * .22)
+        ..strokeWidth = 4
         ..strokeCap = StrokeCap.round;
 
-      final baseY = size.height * .54;
-      final leftX = size.width * .18;
-      final rightX = size.width * .82;
+      final y = size.height * .56;
+      final leftX = size.width * .12;
+      final rightX = size.width * .88;
 
       for (var i = 0; i < 4; i++) {
-        final h = 14 + (i * 7) + (pulse * 10);
+        final h = 10 + i * 5 + wave * 8;
         canvas.drawLine(
-          Offset(leftX - i * 13, baseY - h / 2),
-          Offset(leftX - i * 13, baseY + h / 2),
+          Offset(leftX - i * 10, y - h / 2),
+          Offset(leftX - i * 10, y + h / 2),
           voicePaint,
         );
         canvas.drawLine(
-          Offset(rightX + i * 13, baseY - h / 2),
-          Offset(rightX + i * 13, baseY + h / 2),
+          Offset(rightX + i * 10, y - h / 2),
+          Offset(rightX + i * 10, y + h / 2),
           voicePaint,
         );
       }
@@ -436,16 +218,16 @@ class _CharacterAuraPainter extends CustomPainter {
     if (thinking) {
       final sparklePaint = Paint()
         ..style = PaintingStyle.fill
-        ..color = const Color(0xFFD49A46).withOpacity(.82);
+        ..color = const Color(0xFFD49A46).withOpacity(.76);
 
       final points = [
-        Offset(size.width * .20, size.height * .18),
-        Offset(size.width * .73, size.height * .15),
-        Offset(size.width * .82, size.height * .28),
+        Offset(size.width * .19, size.height * .20),
+        Offset(size.width * .76, size.height * .16),
+        Offset(size.width * .82, size.height * .30),
       ];
 
       for (var i = 0; i < points.length; i++) {
-        final r = 4.5 + (((sparkle + i * .23) % 1) * 3.5);
+        final r = 4.0 + (((sparkle + i * .2) % 1) * 3.0);
         _drawSparkle(canvas, points[i], r, sparklePaint);
       }
     }
@@ -454,19 +236,19 @@ class _CharacterAuraPainter extends CustomPainter {
   void _drawSparkle(Canvas canvas, Offset c, double r, Paint paint) {
     final path = Path()
       ..moveTo(c.dx, c.dy - r)
-      ..lineTo(c.dx + r * .32, c.dy - r * .32)
+      ..lineTo(c.dx + r * .30, c.dy - r * .30)
       ..lineTo(c.dx + r, c.dy)
-      ..lineTo(c.dx + r * .32, c.dy + r * .32)
+      ..lineTo(c.dx + r * .30, c.dy + r * .30)
       ..lineTo(c.dx, c.dy + r)
-      ..lineTo(c.dx - r * .32, c.dy + r * .32)
+      ..lineTo(c.dx - r * .30, c.dy + r * .30)
       ..lineTo(c.dx - r, c.dy)
-      ..lineTo(c.dx - r * .32, c.dy - r * .32)
+      ..lineTo(c.dx - r * .30, c.dy - r * .30)
       ..close();
     canvas.drawPath(path, paint);
   }
 
   @override
-  bool shouldRepaint(covariant _CharacterAuraPainter oldDelegate) {
+  bool shouldRepaint(covariant _NarrationAuraPainter oldDelegate) {
     return oldDelegate.speaking != speaking ||
         oldDelegate.thinking != thinking ||
         oldDelegate.pulse != pulse ||
