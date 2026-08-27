@@ -22,4 +22,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/lakbay_lolo.svg
-    - assets/images/lakbay_lolo_3d.jpg
+    - assets/images/lakbay_lolo_3d.webp
