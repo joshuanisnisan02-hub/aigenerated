@@ -3,19 +3,29 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 class LakbayApi {
-  LakbayApi({this.baseUrl = ''});
+  LakbayApi({
+    this.chatBaseUrl = '',
+    this.ttsBaseUrl = '',
+  });
 
-  /// Point this to your deployed API / Supabase Edge Function base URL.
+  /// Base URL for the optional AI/history backend.
+  /// When empty, the app keeps using the built-in demo history answers.
+  final String chatBaseUrl;
+
+  /// Base URL for the natural Filipino speech backend.
   /// Example: https://YOUR-PROJECT.supabase.co/functions/v1
-  final String baseUrl;
+  final String ttsBaseUrl;
+
+  bool get hasNaturalVoice => ttsBaseUrl.trim().isNotEmpty;
+  bool get hasLiveChat => chatBaseUrl.trim().isNotEmpty;
 
   Future<String> ask(String question) async {
-    if (baseUrl.isEmpty) {
+    if (!hasLiveChat) {
       return _demoAnswer(question);
     }
 
     final response = await http.post(
-      Uri.parse('$baseUrl/lakbay-chat'),
+      Uri.parse('${chatBaseUrl.replaceAll(RegExp(r'/$'), '')}/lakbay-chat'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'question': question}),
     );
@@ -29,18 +39,23 @@ class LakbayApi {
   }
 
   Future<Uint8List> synthesize(String text) async {
-    if (baseUrl.isEmpty) {
-      throw StateError('TTS backend is not configured.');
+    if (!hasNaturalVoice) {
+      throw StateError('Natural Filipino TTS backend is not configured.');
     }
 
     final response = await http.post(
-      Uri.parse('$baseUrl/lakbay-tts'),
+      Uri.parse('${ttsBaseUrl.replaceAll(RegExp(r'/$'), '')}/lakbay-tts'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'text': text}),
     );
 
     if (response.statusCode >= 400) {
-      throw Exception('Hindi makagawa ng natural Filipino speech.');
+      final message = utf8.decode(response.bodyBytes, allowMalformed: true);
+      throw Exception(
+        message.isEmpty
+            ? 'Hindi makagawa ng natural Filipino speech.'
+            : 'Hindi makagawa ng natural Filipino speech: $message',
+      );
     }
 
     return response.bodyBytes;
