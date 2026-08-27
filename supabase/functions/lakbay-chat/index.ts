@@ -47,9 +47,9 @@ MGA PANUNTUNAN:
 - Kung ang tanong ay hindi tungkol sa Pilipinas o kasaysayan, magalang na ibalik ang usapan sa Kasaysayan ng Pilipinas.`;
 
     const models = [
-      'gemini-3.7-flash',
       'gemini-2.5-flash',
       'gemini-2.0-flash',
+      'gemini-1.5-flash',
     ];
 
     const failures: Array<{ model: string; status: number; details: string }> = [];
@@ -98,10 +98,7 @@ MGA PANUNTUNAN:
         ? parts.map((p: { text?: string }) => p?.text ?? '').join('').trim()
         : '';
 
-      if (answer) {
-        return json({ answer, model });
-      }
-
+      if (answer) return json({ answer, model });
       failures.push({ model, status: 200, details: 'Empty candidate response.' });
     }
 
