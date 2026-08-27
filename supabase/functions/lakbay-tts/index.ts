@@ -45,8 +45,27 @@ Deno.serve(async (req) => {
       }, 500);
     }
 
-    const safeText = text.trim().slice(0, 1800);
+    const safeText = normalizeFilipinoSpeech(text).slice(0, 1800);
     const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`;
+
+    const body: Record<string, unknown> = {
+      text: safeText,
+      model_id: modelId,
+      voice_settings: {
+        stability: 0.42,
+        similarity_boost: 0.78,
+        style: 0.16,
+        use_speaker_boost: true,
+      },
+    };
+
+    // ElevenLabs does not support language_code on multilingual_v2.
+    // For models that do support it (such as Eleven v3 / Flash v2.5),
+    // explicitly force Filipino so short names and dates are normalized
+    // using Filipino pronunciation rules.
+    if (modelId !== 'eleven_multilingual_v2') {
+      body.language_code = 'fil';
+    }
 
     const elevenResponse = await fetch(endpoint, {
       method: 'POST',
@@ -55,16 +74,7 @@ Deno.serve(async (req) => {
         'Content-Type': 'application/json',
         'Accept': 'audio/mpeg',
       },
-      body: JSON.stringify({
-        text: safeText,
-        model_id: modelId,
-        voice_settings: {
-          stability: 0.48,
-          similarity_boost: 0.78,
-          style: 0.18,
-          use_speaker_boost: true,
-        },
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!elevenResponse.ok) {
@@ -97,6 +107,54 @@ Deno.serve(async (req) => {
     return json({ error: error instanceof Error ? error.message : String(error) }, 500);
   }
 });
+
+function normalizeFilipinoSpeech(input: string): string {
+  let value = input
+    .replace(/\r/g, '')
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/[*_#>`]/g, '')
+    .replace(/📚[^\n]*/gi, '')
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Speech-only aliases. The visible answer remains unchanged; these spellings
+  // simply help the Filipino TTS voice pronounce common historical names and
+  // terms in a classroom-friendly Filipino way.
+  const aliases: Array<[RegExp, string]> = [
+    [/\bDr\.\s*Jose Rizal\b/gi, 'Doktor Hosé Rizal'],
+    [/\bJose Rizal\b/gi, 'Hosé Rizal'],
+    [/\bJosé Rizal\b/gi, 'Hosé Rizal'],
+    [/\bAndres Bonifacio\b/gi, 'Andrés Bonifásyo'],
+    [/\bAndrés Bonifacio\b/gi, 'Andrés Bonifásyo'],
+    [/\bEmilio Aguinaldo\b/gi, 'Emílyo Aginaldo'],
+    [/\bApolinario Mabini\b/gi, 'Apolináryo Mabíni'],
+    [/\bMarcelo H\. del Pilar\b/gi, 'Marsélo H. del Pilár'],
+    [/\bLapu[ -]?Lapu\b/gi, 'Lapu-Lapu'],
+    [/\bLapulapu\b/gi, 'Lapu-Lapu'],
+    [/\bFerdinand Magellan\b/gi, 'Ferdinand Magelyán'],
+    [/\bEDSA\b/g, 'Edsa'],
+    [/\bWWII\b/gi, 'Ikalawang Digmaang Pandaigdig'],
+    [/\bWorld War II\b/gi, 'Ikalawang Digmaang Pandaigdig'],
+    [/\bMartial Law\b/gi, 'Batas Militar'],
+    [/\bNHCP\b/g, 'N H C P'],
+  ];
+
+  for (const [pattern, replacement] of aliases) {
+    value = value.replace(pattern, replacement);
+  }
+
+  // Add a little punctuation around long clauses so the narrator does not rush.
+  value = value
+    .replace(/\s+-\s+/g, ', ')
+    .replace(/;\s*/g, ', ')
+    .replace(/\.\s*\./g, '.')
+    .replace(/\s+([,.!?])/g, '$1')
+    .trim();
+
+  return value;
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
