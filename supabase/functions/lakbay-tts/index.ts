@@ -59,10 +59,6 @@ Deno.serve(async (req) => {
       },
     };
 
-    // ElevenLabs does not support language_code on multilingual_v2.
-    // For models that do support it (such as Eleven v3 / Flash v2.5),
-    // explicitly force Filipino so short names and dates are normalized
-    // using Filipino pronunciation rules.
     if (modelId !== 'eleven_multilingual_v2') {
       body.language_code = 'fil';
     }
@@ -119,10 +115,21 @@ function normalizeFilipinoSpeech(input: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Speech-only aliases. The visible answer remains unchanged; these spellings
-  // simply help the Filipino TTS voice pronounce common historical names and
-  // terms in a classroom-friendly Filipino way.
+  // The welcome line is heard very often, so give the narrator a dedicated
+  // speech-only version with clearer pauses and a Filipino-friendly reading of
+  // the initials AI. The text displayed in Flutter is not changed.
+  const welcomeStart = 'Mabuhay! Ako si Lakbay Kasaysayan AI,';
+  if (value.startsWith(welcomeStart)) {
+    value = value.replace(
+      /^Mabuhay! Ako si Lakbay Kasaysayan AI, ang iyong gabay sa Kasaysayan ng Pilipinas\. Maaari mo akong tanungin tungkol sa mga tao, lugar, pangyayari, at mahahalagang bahagi ng ating kasaysayan\. Ano ang gusto mong malaman\?/i,
+      'Mabuhay! Ako si Lakbay Kasaysayan, ey ay. Ako ang iyong gabay sa kasaysayan ng Pilipinas. Maaari mo akong tanungin tungkol sa mga tao, lugar, pangyayari, at mahahalagang bahagi ng ating kasaysayan. Ano ang gusto mong malaman?',
+    );
+  }
+
+  // Speech-only aliases. The visible answer remains unchanged.
   const aliases: Array<[RegExp, string]> = [
+    [/\bLakbay Kasaysayan AI\b/gi, 'Lakbay Kasaysayan, ey ay'],
+    [/\bAI\b/g, 'ey ay'],
     [/\bDr\.\s*Jose Rizal\b/gi, 'Doktor Hosé Rizal'],
     [/\bJose Rizal\b/gi, 'Hosé Rizal'],
     [/\bJosé Rizal\b/gi, 'Hosé Rizal'],
@@ -145,7 +152,6 @@ function normalizeFilipinoSpeech(input: string): string {
     value = value.replace(pattern, replacement);
   }
 
-  // Add a little punctuation around long clauses so the narrator does not rush.
   value = value
     .replace(/\s+-\s+/g, ', ')
     .replace(/;\s*/g, ', ')
