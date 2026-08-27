@@ -1,27 +1,75 @@
 import 'package:flutter/material.dart';
 import '../models/chat_message.dart';
+import '../services/audio_player_service.dart';
+import '../services/lakbay_api.dart';
 
-class ConversationPanel extends StatelessWidget {
+class ConversationPanel extends StatefulWidget {
   const ConversationPanel({
     super.key,
     required this.messages,
     required this.controller,
     required this.onSend,
     required this.onMic,
-    required this.onSpeak,
     required this.isListening,
     required this.isBusy,
-    required this.isSpeaking,
   });
 
   final List<ChatMessage> messages;
   final TextEditingController controller;
   final VoidCallback onSend;
   final VoidCallback onMic;
-  final ValueChanged<String> onSpeak;
   final bool isListening;
   final bool isBusy;
-  final bool isSpeaking;
+
+  @override
+  State<ConversationPanel> createState() => _ConversationPanelState();
+}
+
+class _ConversationPanelState extends State<ConversationPanel> {
+  static const _ttsBaseUrl = String.fromEnvironment(
+    'LAKBAY_TTS_BASE_URL',
+    defaultValue: '',
+  );
+
+  late final LakbayApi _api = LakbayApi(
+    chatBaseUrl: '',
+    ttsBaseUrl: _ttsBaseUrl,
+  );
+  final AudioPlayerService _audio = AudioPlayerService();
+
+  bool _replaying = false;
+  int? _activeIndex;
+
+  Future<void> _speak(int index, String text) async {
+    if (_ttsBaseUrl.isEmpty || _replaying) return;
+
+    setState(() {
+      _replaying = true;
+      _activeIndex = index;
+    });
+
+    try {
+      await _audio.stop();
+      final bytes = await _api.synthesize(text);
+      await _audio.playBytes(bytes);
+    } catch (_) {
+      // The main screen already exposes voice/backend errors. Keep replay taps
+      // unobtrusive and avoid adding another banner inside the conversation.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _replaying = false;
+          _activeIndex = null;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _audio.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -30,11 +78,12 @@ class ConversationPanel extends StatelessWidget {
         Expanded(
           child: ListView.separated(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-            itemCount: messages.length,
+            itemCount: widget.messages.length,
             separatorBuilder: (_, __) => const SizedBox(height: 14),
             itemBuilder: (context, i) {
-              final m = messages[i];
+              final m = widget.messages[i];
               final tutor = m.speaker == Speaker.tutor;
+              final replayingThis = _replaying && _activeIndex == i;
 
               final bubble = Container(
                 decoration: BoxDecoration(
@@ -65,7 +114,7 @@ class ConversationPanel extends StatelessWidget {
                           ),
                           if (tutor)
                             Icon(
-                              isSpeaking ? Icons.graphic_eq_rounded : Icons.volume_up_rounded,
+                              replayingThis ? Icons.graphic_eq_rounded : Icons.volume_up_rounded,
                               size: 17,
                               color: const Color(0xFF9B7438),
                             ),
@@ -82,9 +131,9 @@ class ConversationPanel extends StatelessWidget {
                       ),
                       if (tutor) ...[
                         const SizedBox(height: 8),
-                        const Text(
-                          'I-click para pakinggan',
-                          style: TextStyle(
+                        Text(
+                          replayingThis ? 'Pinapakinggan…' : 'I-click para pakinggan',
+                          style: const TextStyle(
                             fontSize: 10.5,
                             fontWeight: FontWeight.w600,
                             color: Color(0xFF9A835F),
@@ -108,7 +157,7 @@ class ConversationPanel extends StatelessWidget {
                             label: 'Pakinggan ang sagot ni Lakbay',
                             child: InkWell(
                               borderRadius: BorderRadius.circular(20),
-                              onTap: () => onSpeak(m.text),
+                              onTap: _replaying ? null : () => _speak(i, m.text),
                               child: bubble,
                             ),
                           ),
@@ -132,17 +181,17 @@ class ConversationPanel extends StatelessWidget {
               children: [
                 IconButton.filledTonal(
                   tooltip: 'Magsalita',
-                  onPressed: isBusy ? null : onMic,
-                  icon: Icon(isListening ? Icons.mic_rounded : Icons.mic_none_rounded),
+                  onPressed: widget.isBusy ? null : widget.onMic,
+                  icon: Icon(widget.isListening ? Icons.mic_rounded : Icons.mic_none_rounded),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: TextField(
-                    controller: controller,
+                    controller: widget.controller,
                     minLines: 1,
                     maxLines: 5,
                     textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => onSend(),
+                    onSubmitted: (_) => widget.onSend(),
                     decoration: InputDecoration(
                       hintText: 'Magtanong tungkol sa Kasaysayan ng Pilipinas…',
                       filled: true,
@@ -157,9 +206,9 @@ class ConversationPanel extends StatelessWidget {
                 const SizedBox(width: 10),
                 IconButton.filled(
                   tooltip: 'Ipadala',
-                  onPressed: isBusy ? null : onSend,
+                  onPressed: widget.isBusy ? null : widget.onSend,
                   style: IconButton.styleFrom(backgroundColor: const Color(0xFF173A5E)),
-                  icon: isBusy
+                  icon: widget.isBusy
                       ? const SizedBox(
                           width: 18,
                           height: 18,
