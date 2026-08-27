@@ -19,20 +19,36 @@ class _HomeScreenState extends State<HomeScreen> {
   final _speech = stt.SpeechToText();
   final _audio = AudioPlayerService();
 
-  // For a real deployment, set your Supabase Functions URL here or load it
-  // from a safe runtime configuration. Secrets remain server-side.
-  final _api = LakbayApi(baseUrl: '');
+  static const _chatBaseUrl = String.fromEnvironment(
+    'LAKBAY_CHAT_BASE_URL',
+    defaultValue: '',
+  );
+
+  static const _ttsBaseUrl = String.fromEnvironment(
+    'LAKBAY_TTS_BASE_URL',
+    defaultValue: '',
+  );
+
+  late final LakbayApi _api = LakbayApi(
+    chatBaseUrl: _chatBaseUrl,
+    ttsBaseUrl: _ttsBaseUrl,
+  );
 
   int _mode = 0;
   bool _busy = false;
   bool _listening = false;
   bool _speaking = false;
+  bool _voiceEnabled = true;
+  String? _voiceStatus;
+
+  static const _welcome =
+      'Mabuhay! Ako si Lakbay Kasaysayan AI, ang iyong gabay sa Kasaysayan ng Pilipinas. Maaari mo akong tanungin tungkol sa mga tao, lugar, pangyayari, at mahahalagang bahagi ng ating kasaysayan. Ano ang gusto mong malaman?';
 
   final _messages = <ChatMessage>[
     ChatMessage(
       speaker: Speaker.tutor,
       createdAt: DateTime.now(),
-      text: 'Mabuhay! Ako si Lakbay Kasaysayan AI, ang iyong gabay sa Kasaysayan ng Pilipinas. Maaari mo akong tanungin tungkol sa mga tao, lugar, pangyayari, at mahahalagang bahagi ng ating kasaysayan. Ano ang gusto mong malaman?',
+      text: _welcome,
     ),
   ];
 
@@ -52,6 +68,29 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _speak(String text) async {
+    if (!_voiceEnabled) return;
+
+    if (!_api.hasNaturalVoice) {
+      if (!mounted) return;
+      setState(() {
+        _voiceStatus =
+            'Natural Filipino voice is not configured yet. Run the app with LAKBAY_TTS_BASE_URL pointing to your deployed Supabase Functions URL.';
+      });
+      return;
+    }
+
+    try {
+      if (mounted) setState(() => _voiceStatus = 'Gumagawa ng natural Filipino voice…');
+      final bytes = await _api.synthesize(text);
+      await _audio.playBytes(bytes);
+      if (mounted) setState(() => _voiceStatus = null);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _voiceStatus = 'Hindi ma-play ang boses. ${e.toString()}');
+    }
+  }
+
   Future<void> _send([String? override]) async {
     final question = (override ?? _text.text).trim();
     if (question.isEmpty || _busy) return;
@@ -59,23 +98,25 @@ class _HomeScreenState extends State<HomeScreen> {
     _text.clear();
     setState(() {
       _busy = true;
-      _messages.add(ChatMessage(speaker: Speaker.student, text: question, createdAt: DateTime.now()));
+      _messages.add(ChatMessage(
+        speaker: Speaker.student,
+        text: question,
+        createdAt: DateTime.now(),
+      ));
     });
 
     try {
       final answer = await _api.ask(question);
       if (!mounted) return;
       setState(() {
-        _messages.add(ChatMessage(speaker: Speaker.tutor, text: answer, createdAt: DateTime.now()));
+        _messages.add(ChatMessage(
+          speaker: Speaker.tutor,
+          text: answer,
+          createdAt: DateTime.now(),
+        ));
       });
 
-      // Neural TTS is used when a backend URL is configured.
-      // In demo mode we avoid the browser TTS so the app never falls back
-      // to the robotic OS voice that the project is trying to replace.
-      if (_api.baseUrl.isNotEmpty) {
-        final bytes = await _api.synthesize(answer);
-        await _audio.playBytes(bytes);
-      }
+      await _speak(answer);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -132,7 +173,47 @@ class _HomeScreenState extends State<HomeScreen> {
           SafeArea(
             child: Column(
               children: [
-                _TopBar(compact: compact),
+                _TopBar(
+                  compact: compact,
+                  naturalVoiceReady: _api.hasNaturalVoice,
+                  voiceEnabled: _voiceEnabled,
+                  onVoiceToggle: () async {
+                    if (_speaking) await _audio.stop();
+                    if (!mounted) return;
+                    setState(() => _voiceEnabled = !_voiceEnabled);
+                  },
+                ),
+                if (_voiceStatus != null)
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(compact ? 16 : 26, 0, compact ? 16 : 26, 8),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF3D8),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0x33B07830)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.info_outline_rounded, size: 18, color: Color(0xFF8B621F)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _voiceStatus!,
+                              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF76531F)),
+                            ),
+                          ),
+                          if (!_api.hasNaturalVoice)
+                            TextButton.icon(
+                              onPressed: () => _speak(_welcome),
+                              icon: const Icon(Icons.volume_up_rounded, size: 17),
+                              label: const Text('Test voice'),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
                 Expanded(
                   child: Padding(
                     padding: EdgeInsets.fromLTRB(compact ? 12 : 24, 4, compact ? 12 : 24, 18),
@@ -203,8 +284,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 if (!compact) ...[
                   const SizedBox(height: 12),
-                  const Text('Makinig. Magtanong. Tuklasin ang ating kasaysayan.',
-                      style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: Color(0xFF2D2A25))),
+                  const Text(
+                    'Makinig. Magtanong. Tuklasin ang ating kasaysayan.',
+                    style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: Color(0xFF2D2A25)),
+                  ),
                 ],
               ],
             ),
@@ -229,8 +312,12 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               child: Row(
                 children: [
-                  Icon(_speaking ? Icons.graphic_eq_rounded : (_busy ? Icons.hourglass_top_rounded : Icons.auto_awesome_rounded),
-                      color: const Color(0xFFB07830)),
+                  Icon(
+                    _speaking
+                        ? Icons.graphic_eq_rounded
+                        : (_busy ? Icons.hourglass_top_rounded : Icons.auto_awesome_rounded),
+                    color: const Color(0xFFB07830),
+                  ),
                   const SizedBox(width: 9),
                   Expanded(
                     child: Text(
@@ -238,6 +325,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: const TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF4B4338)),
                     ),
                   ),
+                  if (!_speaking)
+                    IconButton(
+                      tooltip: 'Pakinggan ang pagbati',
+                      onPressed: _api.hasNaturalVoice && _voiceEnabled ? () => _speak(_welcome) : null,
+                      icon: const Icon(Icons.volume_up_rounded),
+                    ),
                 ],
               ),
             ),
@@ -262,10 +355,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
-                    children: _suggestions.map((q) => Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ActionChip(label: Text(q), onPressed: () => _send(q)),
-                    )).toList(),
+                    children: _suggestions
+                        .map((q) => Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ActionChip(label: Text(q), onPressed: () => _send(q)),
+                            ))
+                        .toList(),
                   ),
                 ),
               ],
@@ -289,8 +384,17 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.compact});
+  const _TopBar({
+    required this.compact,
+    required this.naturalVoiceReady,
+    required this.voiceEnabled,
+    required this.onVoiceToggle,
+  });
+
   final bool compact;
+  final bool naturalVoiceReady;
+  final bool voiceEnabled;
+  final VoidCallback onVoiceToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -312,26 +416,52 @@ class _TopBar extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Lakbay Kasaysayan AI',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Color(0xFF173A5E))),
+                const Text(
+                  'Lakbay Kasaysayan AI',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Color(0xFF173A5E)),
+                ),
                 if (!compact)
-                  const Text('AI Filipino History Tutor',
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF7B756C))),
+                  const Text(
+                    'AI Filipino History Tutor',
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF7B756C)),
+                  ),
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF2E6CE),
+          Tooltip(
+            message: naturalVoiceReady
+                ? (voiceEnabled ? 'Natural Filipino voice is enabled' : 'Natural Filipino voice is muted')
+                : 'Natural Filipino voice backend is not configured',
+            child: InkWell(
               borderRadius: BorderRadius.circular(999),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.volume_up_outlined, size: 17, color: Color(0xFF7E5B28)),
-                SizedBox(width: 6),
-                Text('Natural Filipino', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF7E5B28))),
-              ],
+              onTap: onVoiceToggle,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: naturalVoiceReady ? const Color(0xFFEAF2E8) : const Color(0xFFF2E6CE),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      !voiceEnabled
+                          ? Icons.volume_off_outlined
+                          : (naturalVoiceReady ? Icons.record_voice_over_rounded : Icons.volume_up_outlined),
+                      size: 17,
+                      color: naturalVoiceReady ? const Color(0xFF3F6847) : const Color(0xFF7E5B28),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      naturalVoiceReady ? 'Natural Filipino' : 'Voice setup',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: naturalVoiceReady ? const Color(0xFF3F6847) : const Color(0xFF7E5B28),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ],
