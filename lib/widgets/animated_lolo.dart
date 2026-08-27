@@ -33,7 +33,7 @@ class _AnimatedLoloState extends State<AnimatedLolo>
     )..repeat(reverse: true);
     _mouth = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 150),
+      duration: const Duration(milliseconds: 170),
     );
     _blink = AnimationController(
       vsync: this,
@@ -48,9 +48,7 @@ class _AnimatedLoloState extends State<AnimatedLolo>
 
   Future<void> _scheduleBlink() async {
     while (mounted) {
-      await Future<void>.delayed(
-        Duration(seconds: 3 + _random.nextInt(4)),
-      );
+      await Future<void>.delayed(Duration(seconds: 3 + _random.nextInt(4)));
       if (!mounted) return;
       await _blink.forward();
       await _blink.reverse();
@@ -83,12 +81,13 @@ class _AnimatedLoloState extends State<AnimatedLolo>
       animation: Listenable.merge([_idle, _mouth, _blink, _sparkle]),
       builder: (context, _) {
         final phase = _idle.value * math.pi * 2;
-        final breathe = 1 + (math.sin(phase) * .014);
-        final sway = math.sin(phase) * .018;
-        final lift = math.sin(phase) * 5.0;
+        final breathe = 1 + (math.sin(phase) * .012);
+        final sway = math.sin(phase) * .012;
+        final lift = math.sin(phase) * 4.0;
         final talkPulse = widget.isSpeaking
             ? .5 + (math.sin(_mouth.value * math.pi) * .5)
             : 0.0;
+        final blinkAmount = Curves.easeInOut.transform(_blink.value);
 
         return Stack(
           alignment: Alignment.center,
@@ -140,9 +139,9 @@ class _AnimatedLoloState extends State<AnimatedLolo>
             Transform.translate(
               offset: Offset(0, widget.isThinking ? lift * .55 : lift),
               child: Transform.rotate(
-                angle: widget.isThinking ? -.028 : sway,
+                angle: widget.isThinking ? -.022 : sway,
                 child: Transform.scale(
-                  scale: widget.isThinking ? .99 : breathe,
+                  scale: widget.isThinking ? .992 : breathe,
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
@@ -165,44 +164,19 @@ class _AnimatedLoloState extends State<AnimatedLolo>
                         fit: BoxFit.contain,
                       ),
                       Align(
-                        alignment: const Alignment(0.0, -.42),
+                        alignment: const Alignment(0.0, -.52),
                         child: IgnorePointer(
-                          child: AnimatedOpacity(
-                            opacity: widget.isSpeaking
-                                ? .18 + (.34 * _mouth.value)
-                                : 0,
-                            duration: const Duration(milliseconds: 70),
-                            child: Transform.scale(
-                              scaleY: .45 + (.95 * _mouth.value),
-                              child: Container(
-                                width: 36,
-                                height: 12,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF4D1E14),
-                                  borderRadius: BorderRadius.circular(20),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: const Color(0xFF4D1E14)
-                                          .withOpacity(.18),
-                                      blurRadius: 8,
-                                    ),
-                                  ],
-                                ),
+                          child: SizedBox(
+                            width: 150,
+                            height: 112,
+                            child: CustomPaint(
+                              painter: _NaturalFacePainter(
+                                blinkAmount: blinkAmount,
+                                mouthPhase: _mouth.value,
+                                idlePhase: phase,
+                                isSpeaking: widget.isSpeaking,
+                                isThinking: widget.isThinking,
                               ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Align(
-                        alignment: const Alignment(0.0, -.56),
-                        child: Transform.scale(
-                          scaleY: _blink.value,
-                          child: Container(
-                            width: 92,
-                            height: 9,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE59255),
-                              borderRadius: BorderRadius.circular(12),
                             ),
                           ),
                         ),
@@ -216,6 +190,195 @@ class _AnimatedLoloState extends State<AnimatedLolo>
         );
       },
     );
+  }
+}
+
+class _NaturalFacePainter extends CustomPainter {
+  _NaturalFacePainter({
+    required this.blinkAmount,
+    required this.mouthPhase,
+    required this.idlePhase,
+    required this.isSpeaking,
+    required this.isThinking,
+  });
+
+  final double blinkAmount;
+  final double mouthPhase;
+  final double idlePhase;
+  final bool isSpeaking;
+  final bool isThinking;
+
+  static const _brow = Color(0xFF6C6D70);
+  static const _eye = Color(0xFF32261E);
+  static const _mouth = Color(0xFF6D291F);
+  static const _lip = Color(0xFF8E4330);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final eyeY = size.height * .29;
+    final eyeOpen = 1.0 - blinkAmount;
+    final lookX = isThinking ? -2.2 : math.sin(idlePhase * .55) * .8;
+    final lookY = isThinking ? -.8 : math.cos(idlePhase * .42) * .45;
+
+    _drawBrow(canvas, Offset(cx - 34, eyeY - 17), false);
+    _drawBrow(canvas, Offset(cx + 34, eyeY - 17), true);
+    _drawEye(canvas, Offset(cx - 34, eyeY), eyeOpen, lookX, lookY);
+    _drawEye(canvas, Offset(cx + 34, eyeY), eyeOpen, lookX, lookY);
+    _drawMouth(canvas, cx, size.height * .79);
+  }
+
+  void _drawBrow(Canvas canvas, Offset center, bool right) {
+    final direction = right ? 1.0 : -1.0;
+    final path = Path()
+      ..moveTo(center.dx - 13 * direction, center.dy + 3)
+      ..quadraticBezierTo(
+        center.dx - 3 * direction,
+        center.dy - 6,
+        center.dx + 13 * direction,
+        center.dy + 2,
+      );
+
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = _brow
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4.2
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  void _drawEye(
+    Canvas canvas,
+    Offset center,
+    double openness,
+    double lookX,
+    double lookY,
+  ) {
+    if (openness < .12) {
+      canvas.drawArc(
+        Rect.fromCenter(center: center, width: 25, height: 7),
+        math.pi,
+        math.pi,
+        false,
+        Paint()
+          ..color = const Color(0xFF9D5E3C)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.6
+          ..strokeCap = StrokeCap.round,
+      );
+      return;
+    }
+
+    final eyeRect = Rect.fromCenter(
+      center: center,
+      width: 25,
+      height: 10 + (7 * openness),
+    );
+
+    canvas.drawOval(eyeRect, Paint()..color = Colors.white);
+    canvas.drawOval(
+      eyeRect,
+      Paint()
+        ..color = const Color(0xFFB56B44).withOpacity(.55)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.3,
+    );
+
+    final pupil = center.translate(lookX, lookY);
+    canvas.drawCircle(pupil, 5.0, Paint()..color = _eye);
+    canvas.drawCircle(
+      pupil.translate(-1.5, -1.3),
+      1.3,
+      Paint()..color = Colors.white,
+    );
+  }
+
+  void _drawMouth(Canvas canvas, double cx, double y) {
+    if (!isSpeaking) {
+      final smile = Path()
+        ..moveTo(cx - 17, y)
+        ..quadraticBezierTo(cx, y + 10, cx + 17, y);
+      canvas.drawPath(
+        smile,
+        Paint()
+          ..color = _lip
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.7
+          ..strokeCap = StrokeCap.round,
+      );
+      return;
+    }
+
+    final wave = .5 + .5 * math.sin(mouthPhase * math.pi);
+    final shapeIndex = ((mouthPhase * 5).floor()) % 5;
+
+    double width;
+    double height;
+    switch (shapeIndex) {
+      case 0:
+        width = 25;
+        height = 9 + 5 * wave;
+        break;
+      case 1:
+        width = 18;
+        height = 16 + 6 * wave;
+        break;
+      case 2:
+        width = 31;
+        height = 11 + 7 * wave;
+        break;
+      case 3:
+        width = 21;
+        height = 19 + 5 * wave;
+        break;
+      default:
+        width = 27;
+        height = 13 + 5 * wave;
+    }
+
+    final rect = Rect.fromCenter(
+      center: Offset(cx, y),
+      width: width,
+      height: height,
+    );
+
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(10)),
+      Paint()..color = _mouth,
+    );
+
+    if (shapeIndex == 0 || shapeIndex == 2) {
+      final teeth = Rect.fromCenter(
+        center: Offset(cx, y - height * .16),
+        width: width * .74,
+        height: math.max(2.8, height * .24),
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(teeth, const Radius.circular(3)),
+        Paint()..color = Colors.white,
+      );
+    } else {
+      final tongue = Rect.fromCenter(
+        center: Offset(cx, y + height * .22),
+        width: width * .44,
+        height: math.max(2.8, height * .24),
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(tongue, const Radius.circular(4)),
+        Paint()..color = const Color(0xFFD86E72),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _NaturalFacePainter oldDelegate) {
+    return oldDelegate.blinkAmount != blinkAmount ||
+        oldDelegate.mouthPhase != mouthPhase ||
+        oldDelegate.idlePhase != idlePhase ||
+        oldDelegate.isSpeaking != isSpeaking ||
+        oldDelegate.isThinking != isThinking;
   }
 }
 
