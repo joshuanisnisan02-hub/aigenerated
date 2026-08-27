@@ -81,10 +81,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     try {
-      if (mounted) setState(() => _voiceStatus = 'Gumagawa ng natural Filipino voice…');
+      // Do not show a temporary "Gumagawa ng natural Filipino voice" banner.
+      // The character's thinking/speaking states already provide enough feedback.
+      if (mounted && _voiceStatus != null) {
+        setState(() => _voiceStatus = null);
+      }
       final bytes = await _api.synthesize(text);
       await _audio.playBytes(bytes);
-      if (mounted) setState(() => _voiceStatus = null);
     } catch (e) {
       if (!mounted) return;
       setState(() => _voiceStatus = 'Hindi ma-play ang boses. ${e.toString()}');
