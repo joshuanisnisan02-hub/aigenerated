@@ -46,51 +46,72 @@ MGA PANUNTUNAN:
 - Panatilihing malinaw at angkop sa mag-aaral ang paliwanag. Karaniwang 2 hanggang 5 maiikling talata lamang maliban kung humihingi ng mas detalyadong sagot ang estudyante.
 - Kung ang tanong ay hindi tungkol sa Pilipinas o kasaysayan, magalang na ibalik ang usapan sa Kasaysayan ng Pilipinas.`;
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(geminiKey)}`;
+    const models = [
+      'gemini-3.7-flash',
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+    ];
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: {
-          parts: [{ text: systemPrompt }],
+    const failures: Array<{ model: string; status: number; details: string }> = [];
+
+    for (const model of models) {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': geminiKey,
         },
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: question }],
+        body: JSON.stringify({
+          system_instruction: {
+            parts: [{ text: systemPrompt }],
           },
-        ],
-        generationConfig: {
-          temperature: 0.25,
-          topP: 0.9,
-          maxOutputTokens: 900,
-        },
-      }),
-    });
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: question }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.25,
+            topP: 0.9,
+            maxOutputTokens: 900,
+          },
+        }),
+      });
 
-    if (!response.ok) {
-      const details = await response.text();
-      return json({
-        error: 'Hindi makakuha ng sagot mula sa live AI provider.',
-        status: response.status,
-        details,
-      }, 502);
+      if (!response.ok) {
+        const details = await response.text();
+        failures.push({
+          model,
+          status: response.status,
+          details: details.slice(0, 900),
+        });
+        console.error(`Gemini ${model} failed`, response.status, details.slice(0, 900));
+        continue;
+      }
+
+      const data = await response.json();
+      const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
+      const parts = candidates[0]?.content?.parts;
+      const answer = Array.isArray(parts)
+        ? parts.map((p: { text?: string }) => p?.text ?? '').join('').trim()
+        : '';
+
+      if (answer) {
+        return json({ answer, model });
+      }
+
+      failures.push({ model, status: 200, details: 'Empty candidate response.' });
     }
 
-    const data = await response.json();
-    const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
-    const parts = candidates[0]?.content?.parts;
-    const answer = Array.isArray(parts)
-      ? parts.map((p: { text?: string }) => p?.text ?? '').join('').trim()
-      : '';
-
-    if (!answer) {
-      return json({ error: 'Walang sagot na natanggap mula sa AI provider.' }, 502);
-    }
-
-    return json({ answer });
+    return json({
+      error: 'Hindi makakuha ng sagot mula sa live AI provider.',
+      code: 'all_gemini_models_failed',
+      failures,
+    }, 502);
   } catch (error) {
+    console.error('lakbay-chat unexpected error', error);
     return json({ error: error instanceof Error ? error.message : String(error) }, 500);
   }
 });
