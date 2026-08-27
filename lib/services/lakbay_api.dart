@@ -1,0 +1,65 @@
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:http/http.dart' as http;
+
+class LakbayApi {
+  LakbayApi({this.baseUrl = ''});
+
+  /// Point this to your deployed API / Supabase Edge Function base URL.
+  /// Example: https://YOUR-PROJECT.supabase.co/functions/v1
+  final String baseUrl;
+
+  Future<String> ask(String question) async {
+    if (baseUrl.isEmpty) {
+      return _demoAnswer(question);
+    }
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/lakbay-chat'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'question': question}),
+    );
+
+    if (response.statusCode >= 400) {
+      throw Exception('Hindi makakonekta sa history service.');
+    }
+
+    final data = jsonDecode(utf8.decode(response.bodyBytes));
+    return (data['answer'] as String?) ?? 'Walang sagot na natanggap.';
+  }
+
+  Future<Uint8List> synthesize(String text) async {
+    if (baseUrl.isEmpty) {
+      throw StateError('TTS backend is not configured.');
+    }
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/lakbay-tts'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'text': text}),
+    );
+
+    if (response.statusCode >= 400) {
+      throw Exception('Hindi makagawa ng natural Filipino speech.');
+    }
+
+    return response.bodyBytes;
+  }
+
+  String _demoAnswer(String question) {
+    final q = question.toLowerCase();
+    if (q.contains('katipunan')) {
+      return 'Mahalaga ang Katipunan dahil isa itong lihim na samahang naghangad ng ganap na kalayaan mula sa kolonyal na pamamahala ng Espanya. Itinatag ito noong Hulyo 7, 1892. Isa sa mga pangunahing pinuno nito si Andres Bonifacio. Sa halip na reporma lamang, tahasang itinulak ng Katipunan ang paghihiwalay ng Pilipinas sa Espanya.';
+    }
+    if (q.contains('mactan') || q.contains('lapulapu')) {
+      return 'Ang Labanan sa Mactan ay naganap noong Abril 27, 1521. Hinarap ng mga mandirigma ni Lapulapu ang puwersa ni Ferdinand Magellan. Napatay si Magellan sa labanan. Mahalagang tandaan na ang pangyayaring ito ay hindi pa isang modernong pambansang pakikibaka para sa Pilipinas, ngunit isa itong malinaw na halimbawa ng lokal na pagtutol sa dayuhang panghihimasok.';
+    }
+    if (q.contains('rizal')) {
+      return 'Si Dr. Jose Rizal ay isang manunulat, manggagamot, at repormista. Sa pamamagitan ng Noli Me Tangere at El Filibusterismo, inilantad niya ang mga suliranin at pang-aabuso sa lipunang kolonyal. Binaril siya sa Bagumbayan noong Disyembre 30, 1896.';
+    }
+    if (q.contains('martial law')) {
+      return 'Ang Martial Law sa ilalim ni Ferdinand Marcos Sr. ay idineklara sa pamamagitan ng Proclamation No. 1081, na may petsang Setyembre 21, 1972 at inanunsyo sa publiko noong Setyembre 23. Sa pagtalakay nito, mahalagang gumamit ng primaryang dokumento, opisyal na tala, akademikong pananaliksik, at testimonya ng mga nakaranas ng panahong iyon dahil maraming usaping politikal at historikal ang patuloy na pinagtatalunan.';
+    }
+    return 'Magandang tanong iyan. Sa buong bersyon ng Lakbay Kasaysayan AI, sasagutin ko ito sa malinaw na Filipino at magbibigay ako ng mapagkakatiwalaang sanggunian. Sa demo na ito, subukan mong itanong ang tungkol sa Katipunan, Labanan sa Mactan, Jose Rizal, o Martial Law.';
+  }
+}
