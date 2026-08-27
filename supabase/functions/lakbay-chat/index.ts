@@ -42,14 +42,21 @@ MGA PANUNTUNAN:
       const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
       for (const model of models) {
         try {
-          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`;
+          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
           const response = await fetch(endpoint, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': geminiKey,
+            },
             body: JSON.stringify({
-              system_instruction: { parts: [{ text: systemPrompt }] },
+              systemInstruction: { parts: [{ text: systemPrompt }] },
               contents: [{ role: 'user', parts: [{ text: question }] }],
-              generationConfig: { maxOutputTokens: 900 },
+              generationConfig: {
+                temperature: 0.2,
+                topP: 0.9,
+                maxOutputTokens: 900,
+              },
             }),
           });
 
@@ -63,7 +70,7 @@ MGA PANUNTUNAN:
             if (answer) return json({ answer, model, source: 'gemini' });
           } else {
             const details = await response.text();
-            console.error(`Gemini ${model} failed: ${response.status} ${details.slice(0, 700)}`);
+            console.error(`Gemini ${model} failed: ${response.status} ${details.slice(0, 900)}`);
           }
         } catch (error) {
           console.error(`Gemini ${model} request error`, error);
@@ -71,8 +78,6 @@ MGA PANUNTUNAN:
       }
     }
 
-    // Independent fallback so students can still ask open Philippine-history
-    // questions even when the Gemini key is unavailable, restricted, or over quota.
     const wiki = await wikipediaFallback(question);
     if (wiki) return json({ answer: wiki.answer, source: wiki.source, title: wiki.title });
 
@@ -86,43 +91,62 @@ MGA PANUNTUNAN:
   }
 });
 
+function cleanSearchTopic(question: string): string {
+  return question
+    .replace(/[?!.]+$/g, '')
+    .replace(/^ano ang nangyari sa\s+/i, '')
+    .replace(/^ano ang\s+/i, '')
+    .replace(/^sino si\s+/i, '')
+    .replace(/^sino ang\s+/i, '')
+    .replace(/^bakit mahalaga ang\s+/i, '')
+    .replace(/^bakit mahalaga si\s+/i, '')
+    .trim();
+}
+
 async function wikipediaFallback(question: string): Promise<{answer: string; source: string; title: string} | null> {
+  const topic = cleanSearchTopic(question);
+  const queries = [topic, `${topic} Philippines`, question];
+
   for (const lang of ['tl', 'en']) {
-    try {
-      const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(question + ' Pilipinas history')}&srlimit=3&format=json&origin=*`;
-      const searchResponse = await fetch(searchUrl, {
-        headers: { 'User-Agent': 'LakbayKasaysayanAI/1.0 educational-history-tutor' },
-      });
-      if (!searchResponse.ok) continue;
-      const searchData = await searchResponse.json();
-      const results = searchData?.query?.search;
-      if (!Array.isArray(results) || results.length === 0) continue;
+    for (const query of queries) {
+      try {
+        const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=3&format=json&origin=*`;
+        const searchResponse = await fetch(searchUrl, {
+          headers: { 'User-Agent': 'LakbayKasaysayanAI/1.0 educational-history-tutor' },
+        });
+        if (!searchResponse.ok) continue;
+        const searchData = await searchResponse.json();
+        const results = searchData?.query?.search;
+        if (!Array.isArray(results) || results.length === 0) continue;
 
-      const title = String(results[0].title ?? '').trim();
-      if (!title) continue;
+        const title = String(results[0].title ?? '').trim();
+        if (!title) continue;
 
-      const extractUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=${encodeURIComponent(title)}&format=json&origin=*`;
-      const extractResponse = await fetch(extractUrl, {
-        headers: { 'User-Agent': 'LakbayKasaysayanAI/1.0 educational-history-tutor' },
-      });
-      if (!extractResponse.ok) continue;
-      const extractData = await extractResponse.json();
-      const pages = extractData?.query?.pages;
-      if (!pages || typeof pages !== 'object') continue;
-      const page = Object.values(pages)[0] as { extract?: string } | undefined;
-      const extract = page?.extract?.replace(/\s+/g, ' ').trim() ?? '';
-      if (extract.length < 80) continue;
+        const extractUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=${encodeURIComponent(title)}&format=json&origin=*`;
+        const extractResponse = await fetch(extractUrl, {
+          headers: { 'User-Agent': 'LakbayKasaysayanAI/1.0 educational-history-tutor' },
+        });
+        if (!extractResponse.ok) continue;
+        const extractData = await extractResponse.json();
+        const pages = extractData?.query?.pages;
+        if (!pages || typeof pages !== 'object') continue;
+        const page = Object.values(pages)[0] as { extract?: string } | undefined;
+        const extract = page?.extract?.replace(/\s+/g, ' ').trim() ?? '';
+        if (extract.length < 80) continue;
 
-      const short = extract.length > 900 ? `${extract.slice(0, 900).replace(/\s+\S*$/, '')}…` : extract;
-      const intro = lang === 'tl'
-        ? `Batay sa sangguniang nahanap ko tungkol sa “${title}”: `
-        : `Narito ang maikling paliwanag batay sa sangguniang nahanap ko tungkol sa “${title}”: `;
-      const note = lang === 'tl'
-        ? '\n\n📚 Sanggunian / Maaaring Basahin\n- Wikipedia (Filipino), artikulong: ' + title
-        : '\n\n📚 Sanggunian / Maaaring Basahin\n- Wikipedia, article: ' + title;
-      return { answer: `${intro}${short}${note}`, source: `wikipedia-${lang}`, title };
-    } catch (error) {
-      console.error(`Wikipedia ${lang} fallback failed`, error);
+        const short = extract.length > 900
+          ? `${extract.slice(0, 900).replace(/\s+\S*$/, '')}…`
+          : extract;
+        const intro = lang === 'tl'
+          ? `Batay sa sangguniang nahanap ko tungkol sa “${title}”: `
+          : `Narito ang maikling paliwanag batay sa sangguniang nahanap ko tungkol sa “${title}”: `;
+        const note = lang === 'tl'
+          ? '\n\n📚 Sanggunian / Maaaring Basahin\n- Wikipedia (Filipino), artikulong: ' + title
+          : '\n\n📚 Sanggunian / Maaaring Basahin\n- Wikipedia, article: ' + title;
+        return { answer: `${intro}${short}${note}`, source: `wikipedia-${lang}`, title };
+      } catch (error) {
+        console.error(`Wikipedia ${lang} fallback failed`, error);
+      }
     }
   }
   return null;
