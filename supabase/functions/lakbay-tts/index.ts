@@ -148,9 +148,6 @@ function normalizeFilipinoSpeech(input: string): string {
     value = value.replace(pattern, replacement);
   }
 
-  // Convert all visible Arabic numerals into spoken Filipino words before TTS.
-  // Examples: 23 -> "bente tres"; 1990 ->
-  // "isang libo, siyam na raan, at siyamnapu".
   value = replaceNumbersForSpeech(value);
 
   value = value
@@ -174,10 +171,6 @@ function replaceNumbersForSpeech(input: string): string {
 function filipinoNumber(n: number, conversationalUnder100 = false): string {
   if (n === 0) return 'sero';
 
-  // In everyday Filipino, standalone 20-99 values are commonly spoken with
-  // Spanish-derived forms (e.g. 23 = bente tres). For years and larger
-  // numbers, use native Filipino construction (e.g. 1990 = isang libo,
-  // siyam na raan, at siyamnapu).
   if (conversationalUnder100 && n >= 20 && n < 100) {
     return conversationalTens(n);
   }
@@ -192,8 +185,6 @@ function filipinoNumber(n: number, conversationalUnder100 = false): string {
     if (rest === 0) return first;
 
     const restText = nativeUnder1000(rest);
-    // Give years a natural narration pause. When a hundreds component exists,
-    // use "at" before the final tens/ones segment.
     const hundreds = Math.floor(rest / 100);
     const last = rest % 100;
     if (hundreds > 0 && last > 0) {
@@ -202,10 +193,9 @@ function filipinoNumber(n: number, conversationalUnder100 = false): string {
     if (hundreds > 0) {
       return `${first}, ${hundredsText(hundreds)}`;
     }
-    return `${first}, ${nativeUnder100(last)}`;
+    return `${first}, ${restText}`;
   }
 
-  // General support for larger values likely to appear in counts/statistics.
   const thousands = Math.floor(n / 1000);
   const rest = n % 1000;
   const thousandText = `${nativeUnder1000(thousands)} libo`;
@@ -216,6 +206,12 @@ function filipinoNumber(n: number, conversationalUnder100 = false): string {
 function conversationalTens(n: number): string {
   const tens = Math.floor(n / 10) * 10;
   const ones = n % 10;
+
+  // Exact tens use native Filipino: 20 = dalawampu, 30 = tatlumpu,
+  // 40 = apatnapu, etc. Compound everyday values keep the requested
+  // conversational form, e.g. 23 = bente tres.
+  if (ones === 0) return nativeUnder100(n);
+
   const tensWords: Record<number, string> = {
     20: 'bente',
     30: 'trenta',
@@ -238,7 +234,7 @@ function conversationalTens(n: number): string {
     'otso',
     'nuwebe',
   ];
-  return ones === 0 ? tensWords[tens] : `${tensWords[tens]} ${onesWords[ones]}`;
+  return `${tensWords[tens]} ${onesWords[ones]}`;
 }
 
 function nativeUnder100(n: number): string {
