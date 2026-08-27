@@ -29,49 +29,62 @@ Deno.serve(async (req) => {
       return json({ error: 'Text is required.' }, 400);
     }
 
-    const speechKey = Deno.env.get('AZURE_SPEECH_KEY');
-    const speechRegion = Deno.env.get('AZURE_SPEECH_REGION');
-    const voice = Deno.env.get('AZURE_FILIPINO_VOICE') ?? 'fil-PH-AngeloNeural';
+    const apiKey = Deno.env.get('ELEVENLABS_API_KEY');
+    const voiceId = Deno.env.get('ELEVENLABS_VOICE_ID') ?? '';
+    const modelId = Deno.env.get('ELEVENLABS_MODEL_ID') ?? 'eleven_multilingual_v2';
 
-    if (!speechKey || !speechRegion) {
+    if (!apiKey) {
       return json({
-        error: 'Azure Speech is not configured. Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION in Supabase Edge Function secrets.',
+        error: 'ElevenLabs is not configured. Set ELEVENLABS_API_KEY in Supabase Edge Function secrets.',
       }, 500);
     }
 
-    const safeText = escapeXml(text.trim().slice(0, 4500));
+    if (!voiceId) {
+      return json({
+        error: 'No ElevenLabs voice is configured. Create a Voice Design voice in ElevenLabs and set ELEVENLABS_VOICE_ID in Supabase secrets.',
+      }, 500);
+    }
 
-    const ssml = `<?xml version="1.0" encoding="UTF-8"?>
-<speak version="1.0" xml:lang="fil-PH" xmlns="http://www.w3.org/2001/10/synthesis">
-  <voice name="${voice}">
-    <prosody rate="-7%" pitch="-2%" volume="+0%">
-      ${safeText}
-    </prosody>
-  </voice>
-</speak>`;
+    const safeText = text.trim().slice(0, 1800);
+    const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`;
 
-    const endpoint = `https://${speechRegion}.tts.speech.microsoft.com/cognitiveservices/v1`;
-    const azureResponse = await fetch(endpoint, {
+    const elevenResponse = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'Ocp-Apim-Subscription-Key': speechKey,
-        'Content-Type': 'application/ssml+xml',
-        'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
-        'User-Agent': 'LakbayKasaysayanAI',
+        'xi-api-key': apiKey,
+        'Content-Type': 'application/json',
+        'Accept': 'audio/mpeg',
       },
-      body: ssml,
+      body: JSON.stringify({
+        text: safeText,
+        model_id: modelId,
+        voice_settings: {
+          stability: 0.48,
+          similarity_boost: 0.78,
+          style: 0.18,
+          use_speaker_boost: true,
+        },
+      }),
     });
 
-    if (!azureResponse.ok) {
-      const details = await azureResponse.text();
+    if (!elevenResponse.ok) {
+      const details = await elevenResponse.text();
+
+      if (elevenResponse.status === 400 && details.includes('free_users_not_allowed')) {
+        return json({
+          error: 'The selected ElevenLabs voice is not available through the API on the free plan. Create a voice with ElevenLabs Voice Design, then replace ELEVENLABS_VOICE_ID with that custom voice ID.',
+          code: 'voice_not_available_on_free_plan',
+        }, 400);
+      }
+
       return json({
-        error: 'Azure Speech request failed.',
-        status: azureResponse.status,
+        error: 'ElevenLabs speech request failed.',
+        status: elevenResponse.status,
         details,
       }, 502);
     }
 
-    const audio = await azureResponse.arrayBuffer();
+    const audio = await elevenResponse.arrayBuffer();
     return new Response(audio, {
       status: 200,
       headers: {
@@ -90,13 +103,4 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
-}
-
-function escapeXml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;');
 }
