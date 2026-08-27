@@ -23,133 +23,160 @@ Deno.serve(async (req) => {
     if (!question) return json({ error: 'Question is required.' }, 400);
 
     const geminiKey = Deno.env.get('GEMINI_API_KEY')?.trim() ?? '';
-    const systemPrompt = `Ikaw si Lakbay Kasaysayan AI, isang magiliw, matalino, at mapagkakatiwalaang gabay sa Kasaysayan ng Pilipinas.
+    if (!geminiKey) {
+      return json({
+        error: 'Hindi naka-configure ang live history research service.',
+        code: 'missing_gemini_api_key',
+      }, 503);
+    }
 
-MGA PANUNTUNAN:
-- Pangunahing wika: Filipino/Tagalog.
-- Sagutin muna nang direkta ang tanong bago magbigay ng dagdag na paliwanag.
-- Saklaw mo ang buong kasaysayan ng Pilipinas at hindi ka limitado sa question bank.
-- Huwag mag-imbento ng petsa, tao, batas, quote, source, URL, o dokumento.
-- Kapag may kontrobersiya, sabihin: "May iba't ibang interpretasyon ang mga historyador tungkol dito." at ilahad nang patas ang mahahalagang pananaw.
-- Kapag hindi sapat ang katiyakan, sabihin: "Hindi ako lubos na sigurado sa impormasyong ito. Mas mabuting kumpirmahin natin ito gamit ang mapagkakatiwalaang sanggunian."
-- Ihiwalay kung kinakailangan ang napatunayang pangyayari, interpretasyon, alamat, at pinagtatalunang pahayag.
+    const systemPrompt = `Ikaw si Lakbay Kasaysayan AI, isang maingat, magiliw, at mapagkakatiwalaang tutor sa Kasaysayan ng Pilipinas.
+
+LAYUNIN:
+Sagutin ang eksaktong tanong ng estudyante gamit ang mapagkakatiwalaang ebidensiya. Hindi ka limitado sa question bank. Gumamit ng Google Search grounding kapag kailangan upang ma-verify ang sagot.
+
+MGA PANUNTUNAN SA KATUMPAKAN:
+- Pangunahing wika: natural na Filipino/Tagalog.
+- Sagutin muna nang direkta ang tanong. Huwag magbigay ng impormasyong hindi hinihingi kung hindi kailangan sa paliwanag.
+- Unawain muna kung ano talaga ang hinihingi ng tanong bago magsaliksik. Halimbawa, kung ang tanong ay tungkol sa mga naging kasintahan ni Jose Rizal, huwag sagutin gamit ang artikulo tungkol sa Noli Me Tangere.
+- Bago magbigay ng tiyak na pangalan, petsa, relasyon, batas, sipi, o bilang, i-cross-check ito sa higit sa isang mapagkakatiwalaang sanggunian kung posible.
+- Unahin ang mga sangguniang ito: National Historical Commission of the Philippines (NHCP), Official Gazette of the Republic of the Philippines, National Archives of the Philippines, National Museum of the Philippines, university publications, peer-reviewed academic works, at kinikilalang historical reference works.
+- Huwag gumamit ng isang random o hindi kaugnay na search result bilang batayan ng sagot.
+- Wikipedia ay maaari lamang maging panimulang sanggunian. Huwag itong gawing nag-iisang batayan para sa sensitibo, kontrobersyal, personal, o biographical na claim.
+- Para sa mga personal na relasyon, pag-ibig, pamilya, tsismis, o disputed biography: malinaw na paghiwalayin ang dokumentadong relasyon, malawak na tinatanggap na historical account, at mga alegasyon o kuwentong hindi sapat ang ebidensiya.
+- Huwag mag-imbento ng pangalan, petsa, source, quote, URL, o dokumento.
+- Kung salungat ang mga source, sabihin: "May iba't ibang interpretasyon ang mga historyador tungkol dito." at ipaliwanag kung saan sila nagkakaiba.
+- Kung hindi sapat ang ebidensiya upang sagutin nang maaasahan, sabihin: "Hindi ako lubos na sigurado sa impormasyong ito. Mas mabuting kumpirmahin natin ito gamit ang mapagkakatiwalaang sanggunian." Huwag punan ang kakulangan gamit ang hula.
 - Huwag gawing partisan o propagandistiko ang sagot.
-- Para sa makabuluhang sagot, magdagdag ng "📚 Sanggunian / Maaaring Basahin" na may 1 hanggang 3 tunay at maaasahang source names lamang kung kumpiyansa ka sa mga ito.
-- Panatilihing malinaw at angkop sa mag-aaral ang paliwanag, karaniwang 2 hanggang 5 maiikling talata.
-- Kung ang tanong ay hindi tungkol sa Pilipinas o kasaysayan, magalang na ibalik ang usapan sa Kasaysayan ng Pilipinas.`;
+- Panatilihing malinaw at angkop sa mag-aaral ang paliwanag. Karaniwang 2 hanggang 5 maiikling talata.
+- Kung ang tanong ay hindi tungkol sa Pilipinas o kasaysayan, magalang na ibalik ang usapan sa Kasaysayan ng Pilipinas.
 
-    if (geminiKey) {
-      const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
-      for (const model of models) {
-        try {
-          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-          const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': geminiKey,
-            },
-            body: JSON.stringify({
-              systemInstruction: { parts: [{ text: systemPrompt }] },
-              contents: [{ role: 'user', parts: [{ text: question }] }],
-              generationConfig: {
-                temperature: 0.2,
-                topP: 0.9,
-                maxOutputTokens: 900,
+SANGGUNIAN:
+Sa dulo, maglagay ng seksyong "📚 Sanggunian / Maaaring Basahin". Ilagay lamang ang mga source na talagang ginamit o nahanap sa grounded search. Huwag gumawa ng pekeng sanggunian.`;
+
+    const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+    const failures: Array<{ model: string; status: number; details: string }> = [];
+
+    for (const model of models) {
+      try {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': geminiKey,
+          },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text: `Tanong ng estudyante: ${question}\n\nSuriin muna kung anong uri ng impormasyon ang hinihingi. Mag-search at mag-cross-check ng kaugnay na sources bago sumagot.`,
+                  },
+                ],
               },
-            }),
-          });
+            ],
+            tools: [{ google_search: {} }],
+            generationConfig: {
+              temperature: 0.1,
+              topP: 0.85,
+              maxOutputTokens: 1200,
+            },
+          }),
+        });
 
-          if (response.ok) {
-            const data = await response.json();
-            const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
-            const parts = candidates[0]?.content?.parts;
-            const answer = Array.isArray(parts)
-              ? parts.map((p: { text?: string }) => p?.text ?? '').join('').trim()
-              : '';
-            if (answer) return json({ answer, model, source: 'gemini' });
-          } else {
-            const details = await response.text();
-            console.error(`Gemini ${model} failed: ${response.status} ${details.slice(0, 900)}`);
-          }
-        } catch (error) {
-          console.error(`Gemini ${model} request error`, error);
+        if (!response.ok) {
+          const details = await response.text();
+          failures.push({ model, status: response.status, details: details.slice(0, 800) });
+          console.error(`Gemini ${model} failed: ${response.status} ${details.slice(0, 800)}`);
+          continue;
         }
+
+        const data = await response.json();
+        const candidate = Array.isArray(data?.candidates) ? data.candidates[0] : null;
+        const parts = candidate?.content?.parts;
+        let answer = Array.isArray(parts)
+          ? parts.map((p: { text?: string }) => p?.text ?? '').join('').trim()
+          : '';
+
+        if (!answer) {
+          failures.push({ model, status: 200, details: 'Empty candidate response.' });
+          continue;
+        }
+
+        const groundedSources = extractGroundingSources(candidate?.groundingMetadata);
+        answer = ensureSourceSection(answer, groundedSources);
+
+        return json({
+          answer,
+          model,
+          source: 'gemini-google-search-grounded',
+          grounded: groundedSources.length > 0,
+          sources: groundedSources,
+        });
+      } catch (error) {
+        const details = error instanceof Error ? error.message : String(error);
+        failures.push({ model, status: 0, details });
+        console.error(`Gemini ${model} request error`, error);
       }
     }
 
-    const wiki = await wikipediaFallback(question);
-    if (wiki) return json({ answer: wiki.answer, source: wiki.source, title: wiki.title });
-
+    // Accuracy-first behavior: do not return a loosely matched Wikipedia article
+    // or a guessed answer when grounded research is unavailable.
     return json({
-      error: 'Hindi makakuha ng live history answer sa ngayon.',
-      code: 'history_sources_unavailable',
-    }, 502);
+      answer: 'Hindi ako lubos na sigurado sa impormasyong ito. Mas mabuting kumpirmahin natin ito gamit ang mapagkakatiwalaang sanggunian bago ako magbigay ng tiyak na sagot.',
+      code: 'grounded_history_research_unavailable',
+      failures,
+    }, 200);
   } catch (error) {
     console.error('lakbay-chat unexpected error', error);
     return json({ error: error instanceof Error ? error.message : String(error) }, 500);
   }
 });
 
-function cleanSearchTopic(question: string): string {
-  return question
-    .replace(/[?!.]+$/g, '')
-    .replace(/^ano ang nangyari sa\s+/i, '')
-    .replace(/^ano ang\s+/i, '')
-    .replace(/^sino si\s+/i, '')
-    .replace(/^sino ang\s+/i, '')
-    .replace(/^bakit mahalaga ang\s+/i, '')
-    .replace(/^bakit mahalaga si\s+/i, '')
-    .trim();
+type GroundedSource = {
+  title: string;
+  uri: string;
+};
+
+function extractGroundingSources(metadata: any): GroundedSource[] {
+  const chunks = Array.isArray(metadata?.groundingChunks) ? metadata.groundingChunks : [];
+  const seen = new Set<string>();
+  const sources: GroundedSource[] = [];
+
+  for (const chunk of chunks) {
+    const title = String(chunk?.web?.title ?? '').trim();
+    const uri = String(chunk?.web?.uri ?? '').trim();
+    if (!title && !uri) continue;
+
+    const key = `${title}|${uri}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    sources.push({ title: title || domainFromUrl(uri), uri });
+    if (sources.length >= 4) break;
+  }
+
+  return sources;
 }
 
-async function wikipediaFallback(question: string): Promise<{answer: string; source: string; title: string} | null> {
-  const topic = cleanSearchTopic(question);
-  const queries = [topic, `${topic} Philippines`, question];
-
-  for (const lang of ['tl', 'en']) {
-    for (const query of queries) {
-      try {
-        const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=3&format=json&origin=*`;
-        const searchResponse = await fetch(searchUrl, {
-          headers: { 'User-Agent': 'LakbayKasaysayanAI/1.0 educational-history-tutor' },
-        });
-        if (!searchResponse.ok) continue;
-        const searchData = await searchResponse.json();
-        const results = searchData?.query?.search;
-        if (!Array.isArray(results) || results.length === 0) continue;
-
-        const title = String(results[0].title ?? '').trim();
-        if (!title) continue;
-
-        const extractUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=${encodeURIComponent(title)}&format=json&origin=*`;
-        const extractResponse = await fetch(extractUrl, {
-          headers: { 'User-Agent': 'LakbayKasaysayanAI/1.0 educational-history-tutor' },
-        });
-        if (!extractResponse.ok) continue;
-        const extractData = await extractResponse.json();
-        const pages = extractData?.query?.pages;
-        if (!pages || typeof pages !== 'object') continue;
-        const page = Object.values(pages)[0] as { extract?: string } | undefined;
-        const extract = page?.extract?.replace(/\s+/g, ' ').trim() ?? '';
-        if (extract.length < 80) continue;
-
-        const short = extract.length > 900
-          ? `${extract.slice(0, 900).replace(/\s+\S*$/, '')}…`
-          : extract;
-        const intro = lang === 'tl'
-          ? `Batay sa sangguniang nahanap ko tungkol sa “${title}”: `
-          : `Narito ang maikling paliwanag batay sa sangguniang nahanap ko tungkol sa “${title}”: `;
-        const note = lang === 'tl'
-          ? '\n\n📚 Sanggunian / Maaaring Basahin\n- Wikipedia (Filipino), artikulong: ' + title
-          : '\n\n📚 Sanggunian / Maaaring Basahin\n- Wikipedia, article: ' + title;
-        return { answer: `${intro}${short}${note}`, source: `wikipedia-${lang}`, title };
-      } catch (error) {
-        console.error(`Wikipedia ${lang} fallback failed`, error);
-      }
-    }
+function ensureSourceSection(answer: string, sources: GroundedSource[]): string {
+  const cleaned = answer.trim();
+  if (sources.length === 0 || /📚\s*Sanggunian\s*\/\s*Maaaring Basahin/i.test(cleaned)) {
+    return cleaned;
   }
-  return null;
+
+  const lines = sources.map((source) => `- ${source.title}`);
+  return `${cleaned}\n\n📚 Sanggunian / Maaaring Basahin\n${lines.join('\n')}`;
+}
+
+function domainFromUrl(uri: string): string {
+  try {
+    return new URL(uri).hostname.replace(/^www\./, '');
+  } catch (_) {
+    return 'Web source';
+  }
 }
 
 function json(body: unknown, status = 200): Response {
