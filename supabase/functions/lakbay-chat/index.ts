@@ -31,6 +31,8 @@ Deno.serve(async (req) => {
     }
 
     const trustedContext = buildTrustedContext(question);
+    const minLength = minimumUsefulLength(question);
+
     const systemPrompt = `Ikaw si Lakbay Kasaysayan AI, isang maingat, magiliw, at mapagkakatiwalaang tutor sa Kasaysayan ng Pilipinas.
 
 MGA PANUNTUNAN:
@@ -38,19 +40,22 @@ MGA PANUNTUNAN:
 - Sagutin ang EKSAKTONG tanong ng estudyante. Huwag lumihis sa ibang paksa.
 - Hindi ka limitado sa question bank.
 - Huwag mag-imbento ng pangalan, petsa, relasyon, batas, sipi, source, URL, o dokumento.
+- Para sa karaniwang historical-event question, magbigay ng sapat na paliwanag: ano ang nangyari, sino ang mahalagang sangkot, at bakit mahalaga ang pangyayari. Karaniwang 2 hanggang 4 maiikling talata.
+- Para sa simpleng fact question gaya ng petsa o lugar, puwedeng mas maikli ngunit dapat may isang maikling paliwanag.
 - Para sa biographical at personal-history questions, huwag tawaging "kasintahan" ang isang tao kung ang ebidensiya ay nagpapakita lamang ng paghanga, panliligaw, pagkakaibigan, o maikling pagkakaugnay.
 - Kung magkakaiba ang historical accounts, sabihin: "May iba't ibang interpretasyon ang mga historyador tungkol dito." at ipaliwanag nang maikli ang pagkakaiba.
 - Kung hindi sapat ang ebidensiya, sabihin kung alin lang ang matibay na dokumentado. Huwag punan ang kakulangan gamit ang hula.
 - Huwag gawing partisan o propagandistiko ang sagot.
-- Panatilihing malinaw at angkop sa mag-aaral ang paliwanag. Karaniwang 2 hanggang 4 maiikling talata.
-- Sa dulo, maglagay ng "📚 Sanggunian / Maaaring Basahin" at ilista lamang ang mga source names na talagang ibinigay sa TRUSTED CONTEXT o mga kilalang primary/official sources na lubos kang kumpiyansa.
+- HUWAG gumamit ng Markdown bold, asterisks, hash headings, backticks, o tables. Plain readable text lamang dahil direktang ipinapakita ang sagot sa chat bubble.
+- Huwag magsimula sa generic na pagbati gaya ng "Kumusta" maliban kung binati ka muna ng estudyante. Simulan agad sa sagot.
+- Sa dulo ng makabuluhang sagot, maglagay ng "📚 Sanggunian / Maaaring Basahin" at ilista lamang ang mga source names na nasa TRUSTED CONTEXT o mga source na lubos kang kumpiyansa.
 - Kung ang tanong ay hindi tungkol sa Pilipinas o kasaysayan, magalang na ibalik ang usapan sa Kasaysayan ng Pilipinas.`;
 
     const draftPrompt = `Tanong ng estudyante: ${question}
 
 ${trustedContext ? `TRUSTED CONTEXT:\n${trustedContext}\n\nGamitin ito bilang pangunahing batayan. Huwag salungatin ito nang walang malinaw na dahilan.` : ''}
 
-Sagutin nang direkta, maingat, at pang-estudyante. Kung may terminong malabo gaya ng "kasintahan," linawin ang pagkakaiba ng dokumentadong pag-ibig, panliligaw, at mga babaeng karaniwang iniuugnay lamang sa tao.`;
+Bumuo ng kumpleto ngunit madaling basahing sagot. Para sa historical event, huwag tumigil pagkatapos lamang banggitin ang petsa; ipaliwanag din ang pangyayari at kahalagahan nito. Gumamit ng plain text lamang, walang ** o iba pang Markdown emphasis.`;
 
     const models = [
       'gemini-3.6-flash',
@@ -67,7 +72,7 @@ Sagutin nang direkta, maingat, at pang-estudyante. Kung may terminong malabo gay
         model,
         systemPrompt,
         userPrompt: draftPrompt,
-        maxOutputTokens: 900,
+        maxOutputTokens: 1400,
       });
 
       if (!draftResult.ok) {
@@ -75,11 +80,23 @@ Sagutin nang direkta, maingat, at pang-estudyante. Kung may terminong malabo gay
         continue;
       }
 
-      let answer = draftResult.text;
+      let draft = cleanAnswerText(draftResult.text);
 
-      // A second pass acts as an editor/fact-checker without requiring paid
-      // Google Search grounding. It is especially useful for names, dates,
-      // relationships, and disputed historical claims.
+      // If the first response is suspiciously short, ask the model to complete it
+      // before any fact-checking pass. This prevents one-sentence/truncated cards.
+      if (draft.length < minLength) {
+        const expansion = await callGemini({
+          apiKey: geminiKey,
+          model,
+          systemPrompt,
+          userPrompt: `Palawakin at kumpletuhin ang sagot sa ibaba nang hindi nag-iimbento ng bagong detalye.\n\nTANONG:\n${question}\n\n${trustedContext ? `TRUSTED CONTEXT:\n${trustedContext}\n\n` : ''}KASALUKUYANG SAGOT:\n${draft}\n\nGumawa ng 2 hanggang 4 maiikling talata. Para sa pangyayari, ipaliwanag ang konteksto, pangunahing nangyari, at kahalagahan. Maglagay ng maikling Sanggunian section kung may mapagkakatiwalaang source names. Plain text lamang; walang Markdown bold o asterisks.`,
+          maxOutputTokens: 1500,
+        });
+        if (expansion.ok && cleanAnswerText(expansion.text).length > draft.length) {
+          draft = cleanAnswerText(expansion.text);
+        }
+      }
+
       const verifyPrompt = `Suriin ang sagot sa ibaba bago ito ibigay sa estudyante.
 
 ORIHINAL NA TANONG:
@@ -87,24 +104,42 @@ ${question}
 
 ${trustedContext ? `TRUSTED CONTEXT:\n${trustedContext}\n` : ''}
 DRAFT NA SAGOT:
-${answer}
+${draft}
 
 Gawain:
-1. Tanggalin o itama ang anumang claim na posibleng imbento, sobra ang katiyakan, hindi tumutugon sa tanong, o maling nag-uuri ng relasyon/pangyayari.
-2. Panatilihin lamang ang mga detalyeng mataas ang kumpiyansa.
+1. Itama lamang ang maling o sobra ang katiyakang claim. Huwag paikliin ang sagot nang walang dahilan.
+2. Panatilihin ang mahahalagang paliwanag, konteksto, at kahalagahan ng pangyayari.
 3. Kung may magkakaibang historical accounts, sabihin iyon nang malinaw.
-4. Ibalik ang FINAL ANSWER lamang sa natural na Filipino, kasama ang maikling Sanggunian section. Huwag banggitin ang prosesong ito.`;
+4. Panatilihin ang 2 hanggang 4 maiikling talata para sa historical-event questions.
+5. Plain text lamang. Walang Markdown bold, asterisks, hash heading, o backticks.
+6. Ibalik ang FINAL ANSWER lamang, kasama ang maikling Sanggunian section kapag naaangkop.`;
 
       const checked = await callGemini({
         apiKey: geminiKey,
         model,
         systemPrompt,
         userPrompt: verifyPrompt,
-        maxOutputTokens: 950,
+        maxOutputTokens: 1500,
       });
 
-      if (checked.ok && checked.text.trim().length > 0) {
-        answer = checked.text.trim();
+      let answer = draft;
+      if (checked.ok) {
+        const checkedText = cleanAnswerText(checked.text);
+        // Do not accept a verifier result that accidentally collapses a useful
+        // answer into a tiny fragment. Accuracy editing should preserve substance.
+        const acceptableLength = Math.max(minLength, Math.floor(draft.length * 0.65));
+        if (checkedText.length >= acceptableLength) {
+          answer = checkedText;
+        }
+      }
+
+      answer = cleanAnswerText(answer);
+
+      if (answer.length < minLength) {
+        const deterministic = deterministicFallback(question);
+        if (deterministic) {
+          answer = deterministic;
+        }
       }
 
       return json({
@@ -168,7 +203,8 @@ async function callGemini(args: {
       : '';
 
     if (!text) {
-      return { ok: false, text: '', status: 200, details: 'Empty candidate response.' };
+      const finishReason = String(candidates[0]?.finishReason ?? 'unknown');
+      return { ok: false, text: '', status: 200, details: `Empty candidate response. finishReason=${finishReason}` };
     }
 
     return { ok: true, text, status: 200, details: '' };
@@ -177,6 +213,24 @@ async function callGemini(args: {
     console.error(`Gemini ${args.model} request error`, error);
     return { ok: false, text: '', status: 0, details };
   }
+}
+
+function cleanAnswerText(input: string): string {
+  return input
+    .replace(/\*\*(.*?)\*\*/gs, '$1')
+    .replace(/__(.*?)__/gs, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/`{1,3}/g, '')
+    .replace(/^\s*\*\s+/gm, '- ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function minimumUsefulLength(question: string): number {
+  const q = question.toLowerCase().trim();
+  if (/^(kailan|anong petsa|anong taon|saan)\b/.test(q)) return 180;
+  if (/^(sino si|sino ang)\b/.test(q) && q.length < 65) return 260;
+  return 420;
 }
 
 function buildTrustedContext(question: string): string {
@@ -200,6 +254,16 @@ MGA SANGGUNIANG PANGALAN NA MAAARING ILAGAY:
 - Austin Craig, Lineage, Life and Labors of José Rizal, Philippine Patriot`;
   }
 
+  if (q.includes('mactan') || q.includes('lapulapu') || q.includes('magellan')) {
+    return `Paksa: Labanan sa Mactan.
+- Naganap ang labanan noong Abril 27, 1521 sa Mactan.
+- Ang puwersa ni Lapulapu ay nakipaglaban sa pangkat ni Ferdinand Magellan. Napatay si Magellan sa labanan.
+- Ang pangunahing salaysay ng pangyayari ay mula kay Antonio Pigafetta, isang kasapi ng ekspedisyon ni Magellan.
+- Iwasang ilarawan ito nang sobrang simple bilang isang modernong pambansang digmaan; noong 1521, hindi pa umiiral ang modernong bansang Pilipinas sa kasalukuyang kahulugan.
+- Mahalaga ang pangyayari bilang isang malinaw na halimbawa ng lokal na pagtutol sa panghihimasok at kapangyarihang dayuhan.
+Sanggunian: Antonio Pigafetta, salaysay ng paglalayag ni Magellan; National Historical Commission of the Philippines (NHCP).`;
+  }
+
   if (q.includes('pugad lawin') || q.includes('balintawak')) {
     return `Paksa: Sigaw ng Pugad Lawin / Balintawak.
 - May iba't ibang salaysay tungkol sa eksaktong lugar at petsa ng "Sigaw," kaya huwag magkunwaring iisa lamang ang walang-kontrobersiyang bersyon.
@@ -213,6 +277,18 @@ Sanggunian: National Historical Commission of the Philippines (NHCP); mga memoir
 
 function deterministicFallback(question: string): string | null {
   const q = question.toLowerCase();
+
+  if (q.includes('mactan') || q.includes('lapulapu') || q.includes('magellan')) {
+    return `Ang Labanan sa Mactan ay naganap noong Abril 27, 1521 sa isla ng Mactan. Nakipaglaban ang mga mandirigma ni Lapulapu sa pangkat ni Ferdinand Magellan, na dumating bilang bahagi ng ekspedisyong Europeo na naglalayag sa kapuluan. Sa labanan, napatay si Magellan at umatras ang kanyang mga kasama.
+
+Mahalagang tandaan na hindi pa umiiral noon ang Pilipinas bilang isang modernong bansang-estado. Kaya mas maingat na ilarawan ang Mactan bilang lokal na pagtutol ni Lapulapu at ng kanyang pamayanan sa dayuhang panghihimasok, kaysa sabihing isa na itong pambansang digmaan para sa buong Pilipinas.
+
+Mahalaga ang Labanan sa Mactan dahil naging isa ito sa pinakatanyag na halimbawa ng paglaban ng isang lokal na pinuno sa puwersang dayuhan noong unang bahagi ng ika-16 na siglo. Ang isa sa pinakamahalagang primaryang salaysay tungkol dito ay isinulat ni Antonio Pigafetta, na kasama sa ekspedisyon ni Magellan.
+
+📚 Sanggunian / Maaaring Basahin
+- Antonio Pigafetta, salaysay ng paglalayag ni Magellan
+- National Historical Commission of the Philippines (NHCP)`;
+  }
 
   if (q.includes('rizal') && /(kasintahan|girlfriend|pag-ibig|pagibig|love life|naging babae|mga babae)/i.test(q)) {
     return `Hindi lahat ng babaeng karaniwang iniuugnay kay Jose Rizal ay maituturing na pormal na “kasintahan” sa modernong kahulugan. Sa mga mas matibay na pampublikong sanggunian, tatlong relasyong malinaw na mailalarawan ay sina Segunda Katigbak, Leonor Rivera, at Josephine Bracken.
