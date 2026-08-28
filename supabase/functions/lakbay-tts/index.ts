@@ -23,59 +23,204 @@ Deno.serve(async (req) => {
       return json({ error: 'Text is required.' }, 400);
     }
 
-    const apiKey = Deno.env.get('ELEVENLABS_API_KEY');
-    const voiceId = Deno.env.get('ELEVENLABS_VOICE_ID') ?? '';
-
-    if (!apiKey) return json({ error: 'ElevenLabs is not configured.' }, 500);
-    if (!voiceId) return json({ error: 'No ElevenLabs voice is configured.' }, 500);
-
-    // Force a Filipino-capable model that accepts language_code. This avoids
-    // ElevenLabs guessing an English reading for short Filipino sentences.
-    const modelId = 'eleven_flash_v2_5';
     const safeText = normalizeFilipinoSpeech(text).slice(0, 1800);
-    const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`;
 
-    const elevenResponse = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'xi-api-key': apiKey,
-        'Content-Type': 'application/json',
-        'Accept': 'audio/mpeg',
-      },
-      body: JSON.stringify({
-        text: safeText,
-        model_id: modelId,
-        language_code: 'fil',
-        voice_settings: {
-          stability: 0.50,
-          similarity_boost: 0.74,
-          style: 0.08,
-          use_speaker_boost: true,
-        },
-      }),
-    });
+    // Primary provider: ElevenLabs. If the account is out of credits/quota,
+    // automatically fall back to Gemini TTS so the live app continues speaking.
+    const elevenKey = Deno.env.get('ELEVENLABS_API_KEY')?.trim() ?? '';
+    const voiceId = Deno.env.get('ELEVENLABS_VOICE_ID')?.trim() ?? '';
 
-    if (!elevenResponse.ok) {
-      const details = await elevenResponse.text();
+    if (elevenKey && voiceId) {
+      const elevenResult = await synthesizeElevenLabs(safeText, elevenKey, voiceId);
+      if (elevenResult.ok) {
+        return audioResponse(elevenResult.bytes, 'audio/mpeg', 'elevenlabs');
+      }
+
+      console.error(
+        `ElevenLabs failed (${elevenResult.status}). Falling back to Gemini TTS: ${elevenResult.details.slice(0, 600)}`,
+      );
+    }
+
+    const geminiKey = Deno.env.get('GEMINI_API_KEY')?.trim() ?? '';
+    if (!geminiKey) {
       return json({
-        error: 'ElevenLabs speech request failed.',
-        status: elevenResponse.status,
-        details,
+        error: 'Voice providers are unavailable.',
+        details: 'ElevenLabs could not generate audio and GEMINI_API_KEY is not configured.',
+      }, 503);
+    }
+
+    const geminiResult = await synthesizeGeminiTts(safeText, geminiKey);
+    if (!geminiResult.ok) {
+      return json({
+        error: 'Hindi makagawa ng Filipino voice sa ngayon.',
+        status: geminiResult.status,
+        details: geminiResult.details,
       }, 502);
     }
 
-    return new Response(await elevenResponse.arrayBuffer(), {
-      status: 200,
-      headers: {
-        ...corsHeaders,
-        'Content-Type': 'audio/mpeg',
-        'Cache-Control': 'no-store',
-      },
-    });
+    return audioResponse(geminiResult.bytes, 'audio/wav', 'gemini-tts');
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : String(error) }, 500);
   }
 });
+
+async function synthesizeElevenLabs(
+  text: string,
+  apiKey: string,
+  voiceId: string,
+): Promise<{ ok: true; bytes: Uint8Array; status: number; details: string } | { ok: false; bytes: Uint8Array; status: number; details: string }> {
+  const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'xi-api-key': apiKey,
+      'Content-Type': 'application/json',
+      'Accept': 'audio/mpeg',
+    },
+    body: JSON.stringify({
+      text,
+      model_id: 'eleven_flash_v2_5',
+      language_code: 'fil',
+      voice_settings: {
+        stability: 0.50,
+        similarity_boost: 0.74,
+        style: 0.08,
+        use_speaker_boost: true,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      bytes: new Uint8Array(),
+      status: response.status,
+      details: await response.text(),
+    };
+  }
+
+  return {
+    ok: true,
+    bytes: new Uint8Array(await response.arrayBuffer()),
+    status: 200,
+    details: '',
+  };
+}
+
+async function synthesizeGeminiTts(
+  text: string,
+  apiKey: string,
+): Promise<{ ok: true; bytes: Uint8Array; status: number; details: string } | { ok: false; bytes: Uint8Array; status: number; details: string }> {
+  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent';
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            {
+              text: `Basahin nang natural na Filipino/Tagalog, malinaw, magiliw, at parang isang nakatatandang gurong Pilipino na nagkukuwento ng kasaysayan. Huwag baguhin ang mensahe. Bigkasin nang maayos ang mga pangalang Pilipino at ang mga bilang sa paraang Filipino.\n\n${text}`,
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: 'Kore',
+            },
+          },
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      bytes: new Uint8Array(),
+      status: response.status,
+      details: await response.text(),
+    };
+  }
+
+  const data = await response.json();
+  const parts = data?.candidates?.[0]?.content?.parts;
+  const audioPart = Array.isArray(parts)
+    ? parts.find((part: any) => part?.inlineData?.data)
+    : null;
+  const encoded = audioPart?.inlineData?.data;
+  const mimeType = String(audioPart?.inlineData?.mimeType ?? 'audio/L16;codec=pcm;rate=24000').toLowerCase();
+
+  if (!encoded || typeof encoded !== 'string') {
+    return {
+      ok: false,
+      bytes: new Uint8Array(),
+      status: 200,
+      details: 'Gemini TTS returned no audio payload.',
+    };
+  }
+
+  const pcm = base64ToBytes(encoded);
+  const sampleRateMatch = mimeType.match(/rate=(\d+)/i);
+  const sampleRate = sampleRateMatch ? Number(sampleRateMatch[1]) : 24000;
+  const wav = pcmToWav(pcm, sampleRate, 1, 16);
+
+  return { ok: true, bytes: wav, status: 200, details: '' };
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function pcmToWav(pcm: Uint8Array, sampleRate = 24000, channels = 1, bitsPerSample = 16): Uint8Array {
+  const headerSize = 44;
+  const buffer = new ArrayBuffer(headerSize + pcm.length);
+  const view = new DataView(buffer);
+  const out = new Uint8Array(buffer);
+
+  writeAscii(view, 0, 'RIFF');
+  view.setUint32(4, 36 + pcm.length, true);
+  writeAscii(view, 8, 'WAVE');
+  writeAscii(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  const byteRate = sampleRate * channels * (bitsPerSample / 8);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, channels * (bitsPerSample / 8), true);
+  view.setUint16(34, bitsPerSample, true);
+  writeAscii(view, 36, 'data');
+  view.setUint32(40, pcm.length, true);
+  out.set(pcm, headerSize);
+  return out;
+}
+
+function writeAscii(view: DataView, offset: number, text: string) {
+  for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+}
+
+function audioResponse(bytes: Uint8Array, contentType: string, provider: string): Response {
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': contentType,
+      'Cache-Control': 'no-store',
+      'X-Lakbay-Voice-Provider': provider,
+    },
+  });
+}
 
 function normalizeFilipinoSpeech(input: string): string {
   let value = input
@@ -88,9 +233,6 @@ function normalizeFilipinoSpeech(input: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Dedicated speech copy for the welcome line. The text shown on-screen stays
-  // unchanged, but the audio uses shorter Filipino clauses and no English-style
-  // reading of the letters A-I.
   if (/^Mabuhay! Ako si Lakbay Kasaysayan AI,/i.test(value)) {
     value = value.replace(
       /^Mabuhay! Ako si Lakbay Kasaysayan AI, ang iyong gabay sa Kasaysayan ng Pilipinas\. Maaari mo akong tanungin tungkol sa mga tao, lugar, pangyayari, at mahahalagang bahagi ng ating kasaysayan\. Ano ang gusto mong malaman\?/i,
@@ -120,7 +262,6 @@ function normalizeFilipinoSpeech(input: string): string {
   ];
 
   for (const [pattern, replacement] of aliases) value = value.replace(pattern, replacement);
-
   value = replaceNumbersForSpeech(value);
 
   return value
@@ -153,9 +294,7 @@ function filipinoNumber(n: number, conversationalUnder100 = false): string {
 
     const hundreds = Math.floor(rest / 100);
     const last = rest % 100;
-    if (hundreds > 0 && last > 0) {
-      return `${first}, ${hundredsText(hundreds)}, at ${nativeUnder100(last)}`;
-    }
+    if (hundreds > 0 && last > 0) return `${first}, ${hundredsText(hundreds)}, at ${nativeUnder100(last)}`;
     if (hundreds > 0) return `${first}, ${hundredsText(hundreds)}`;
     return `${first}, ${nativeUnder100(last)}`;
   }
