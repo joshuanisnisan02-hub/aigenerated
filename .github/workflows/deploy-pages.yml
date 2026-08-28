@@ -35,10 +35,14 @@ jobs:
         run: flutter pub get
 
       - name: Build Flutter web app
-        run: flutter build web --release --base-href "/aigenerated/"
+        run: flutter build web --release --base-href "/aigenerated/app/"
 
-      - name: Disable Jekyll processing
-        run: touch build/web/.nojekyll
+      - name: Assemble GitHub Pages site
+        run: |
+          mkdir -p build/pages/app
+          cp -r build/web/* build/pages/app/
+          cp index.html build/pages/index.html
+          touch build/pages/.nojekyll
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
@@ -48,7 +52,7 @@ jobs:
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: build/web
+          path: build/pages
 
   deploy:
     environment:
