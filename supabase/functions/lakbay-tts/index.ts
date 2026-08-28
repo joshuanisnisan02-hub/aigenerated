@@ -25,40 +25,40 @@ Deno.serve(async (req) => {
 
     const safeText = normalizeFilipinoSpeech(text).slice(0, 1800);
 
-    // Primary provider: ElevenLabs. If the account is out of credits/quota,
-    // automatically fall back to Gemini TTS so the live app continues speaking.
+    // Primary provider: Gemini TTS, deliberately directed as an elderly
+    // Filipino male historian/narrator. This keeps Lakbay's voice consistent
+    // with the old-man character and avoids depending on ElevenLabs credits.
+    const geminiKey = Deno.env.get('GEMINI_API_KEY')?.trim() ?? '';
+    if (geminiKey) {
+      const geminiResult = await synthesizeGeminiTts(safeText, geminiKey);
+      if (geminiResult.ok) {
+        return audioResponse(geminiResult.bytes, 'audio/wav', 'gemini-elder-male');
+      }
+
+      console.error(
+        `Gemini TTS failed (${geminiResult.status}). Trying ElevenLabs fallback: ${geminiResult.details.slice(0, 600)}`,
+      );
+    }
+
+    // Optional fallback: existing ElevenLabs voice, if credits are available.
     const elevenKey = Deno.env.get('ELEVENLABS_API_KEY')?.trim() ?? '';
     const voiceId = Deno.env.get('ELEVENLABS_VOICE_ID')?.trim() ?? '';
 
     if (elevenKey && voiceId) {
       const elevenResult = await synthesizeElevenLabs(safeText, elevenKey, voiceId);
       if (elevenResult.ok) {
-        return audioResponse(elevenResult.bytes, 'audio/mpeg', 'elevenlabs');
+        return audioResponse(elevenResult.bytes, 'audio/mpeg', 'elevenlabs-fallback');
       }
 
       console.error(
-        `ElevenLabs failed (${elevenResult.status}). Falling back to Gemini TTS: ${elevenResult.details.slice(0, 600)}`,
+        `ElevenLabs fallback failed (${elevenResult.status}): ${elevenResult.details.slice(0, 600)}`,
       );
     }
 
-    const geminiKey = Deno.env.get('GEMINI_API_KEY')?.trim() ?? '';
-    if (!geminiKey) {
-      return json({
-        error: 'Voice providers are unavailable.',
-        details: 'ElevenLabs could not generate audio and GEMINI_API_KEY is not configured.',
-      }, 503);
-    }
-
-    const geminiResult = await synthesizeGeminiTts(safeText, geminiKey);
-    if (!geminiResult.ok) {
-      return json({
-        error: 'Hindi makagawa ng Filipino voice sa ngayon.',
-        status: geminiResult.status,
-        details: geminiResult.details,
-      }, 502);
-    }
-
-    return audioResponse(geminiResult.bytes, 'audio/wav', 'gemini-tts');
+    return json({
+      error: 'Hindi makagawa ng boses ni Lakbay sa ngayon.',
+      details: 'The elderly male Gemini voice and the ElevenLabs fallback are both unavailable.',
+    }, 503);
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : String(error) }, 500);
   }
@@ -82,9 +82,9 @@ async function synthesizeElevenLabs(
       model_id: 'eleven_flash_v2_5',
       language_code: 'fil',
       voice_settings: {
-        stability: 0.50,
+        stability: 0.58,
         similarity_boost: 0.74,
-        style: 0.08,
+        style: 0.06,
         use_speaker_boost: true,
       },
     }),
@@ -112,6 +112,20 @@ async function synthesizeGeminiTts(
   apiKey: string,
 ): Promise<{ ok: true; bytes: Uint8Array; status: number; details: string } | { ok: false; bytes: Uint8Array; status: number; details: string }> {
   const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent';
+
+  const performancePrompt = `
+AUDIO PROFILE:
+Ikaw ang boses ni Lakbay, isang lalaking Pilipino na nakatatanda, humigit-kumulang 65 hanggang 75 taong gulang. Malalim at mainit ang boses, banayad na baritone, may dignidad at karanasan. Tunog siyang isang mabait na lolo, retiradong guro, o historyador na sanay magkuwento sa mga estudyante. Huwag gawing batang lalaki, huwag gawing babae, at huwag gawing mahina o sobrang paos.
+
+ACCENT AT BIGKAS:
+Natural na Filipino/Tagalog accent. Bigkasin nang malinaw at tama ang mga salitang Filipino, pangalang Pilipino, petsa, at bilang. Iwasan ang American-English accent maliban sa mga salitang kailangang English. Ang mga pangungusap ay dapat natural na parang totoong Pilipinong nakatatandang lalaki ang nagsasalita.
+
+PAGGANAP:
+Mabagal nang kaunti ngunit hindi antukin. Warm, calm, knowledgeable, conversational, at parang nagkukuwento ng kasaysayan sa klase. Gumamit ng natural na paghinto sa kuwit at tuldok. Huwag basahin ang mga instruction na ito. Huwag baguhin o dagdagan ang transcript.
+
+TRANSCRIPT:
+${text}`.trim();
+
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -121,11 +135,7 @@ async function synthesizeGeminiTts(
     body: JSON.stringify({
       contents: [
         {
-          parts: [
-            {
-              text: `Basahin nang natural na Filipino/Tagalog, malinaw, magiliw, at parang isang nakatatandang gurong Pilipino na nagkukuwento ng kasaysayan. Huwag baguhin ang mensahe. Bigkasin nang maayos ang mga pangalang Pilipino at ang mga bilang sa paraang Filipino.\n\n${text}`,
-            },
-          ],
+          parts: [{ text: performancePrompt }],
         },
       ],
       generationConfig: {
@@ -133,7 +143,9 @@ async function synthesizeGeminiTts(
         speechConfig: {
           voiceConfig: {
             prebuiltVoiceConfig: {
-              voiceName: 'Kore',
+              // Gacrux is Google's "Mature" voice preset. Combined with the
+              // audio-profile prompt above, it fits Lakbay's elderly male guide.
+              voiceName: 'Gacrux',
             },
           },
         },
